@@ -1,0 +1,35 @@
+name: Sync main from upstream
+
+on:
+  schedule:
+    # GitHub cron uses UTC. This runs daily at 04:00 Asia/Shanghai.
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-main-from-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Merge upstream main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/ai-dynamo/aiconfigurator.git
+          git fetch upstream main
+          git merge --no-edit upstream/main
+          git push origin HEAD:main

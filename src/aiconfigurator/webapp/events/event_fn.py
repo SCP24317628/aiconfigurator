@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
-import copy
 import logging
 import traceback
 from io import StringIO
@@ -16,8 +15,14 @@ from aiconfigurator.sdk import common, config, models, pareto_analysis
 from aiconfigurator.sdk.backends.factory import get_backend
 from aiconfigurator.sdk.inference_session import InferenceSession
 from aiconfigurator.sdk.models import check_is_moe, get_model, get_model_family
-from aiconfigurator.sdk.perf_database import get_database, get_supported_databases
+from aiconfigurator.sdk.perf_database import get_database
+from aiconfigurator.sdk.task import ESTIMATE_DATABASE_VERSION, TaskRunner
 from aiconfigurator.sdk.utils import enumerate_parallel_config
+from aiconfigurator.webapp.database_options import (
+    get_estimate_quant_mode_choices,
+    get_webapp_backend_choices,
+    get_webapp_version_choices,
+)
 
 
 class LogCapture:
@@ -153,6 +158,45 @@ def create_scatter_plot(df, x_col, y_col, title, is_disagg=False):
     return iframe_html
 
 
+def _load_database_for_mode(system_name, backend_name, version, database_mode):
+    database = TaskRunner._get_database(
+        system=system_name,
+        backend=backend_name,
+        version=version or ESTIMATE_DATABASE_VERSION,
+        database_mode=database_mode,
+    )
+    if database is None:
+        raise ValueError(
+            f"Could not load database for system={system_name}, backend={backend_name}, "
+            f"version={version}, database_mode={database_mode}"
+        )
+    return database
+
+
+def _empty_quant_mode_updates():
+    return (
+        gr.update(choices=[], value=None, interactive=True),
+        gr.update(choices=[], value=None, interactive=True),
+        gr.update(choices=[], value=None, interactive=True),
+        gr.update(choices=[], value=None, interactive=True),
+    )
+
+
+def _estimate_quant_mode_updates():
+    (
+        gemm_quant_mode_choices,
+        kvcache_quant_mode_choices,
+        fmha_quant_mode_choices,
+        moe_quant_mode_choices,
+    ) = get_estimate_quant_mode_choices()
+    return (
+        gr.update(choices=gemm_quant_mode_choices, value=gemm_quant_mode_choices[0], interactive=True),
+        gr.update(choices=kvcache_quant_mode_choices, value=kvcache_quant_mode_choices[0], interactive=True),
+        gr.update(choices=fmha_quant_mode_choices, value=fmha_quant_mode_choices[0], interactive=True),
+        gr.update(choices=moe_quant_mode_choices, value=moe_quant_mode_choices[0], interactive=True),
+    )
+
+
 class EventFn:
     @staticmethod
     def run_estimation_static(
@@ -192,9 +236,7 @@ class EventFn:
             LogCapture() as (logger, log_buffer),
         ):
             try:
-                database = copy.deepcopy(get_database(system_name, backend_name, version))
-                assert database is not None
-                database.set_default_database_mode(common.DatabaseMode[database_mode])
+                database = _load_database_for_mode(system_name, backend_name, version, database_mode)
                 nextn_accept_rates = [float(x) for x in nextn_accept_rates.split(",")]
                 model_config = config.ModelConfig(
                     tp_size=tp_size,
@@ -290,9 +332,7 @@ class EventFn:
             LogCapture() as (logger, log_buffer),
         ):
             try:
-                database = get_database(system_name, backend_name, version)
-                assert database is not None
-                database.set_default_database_mode(common.DatabaseMode[database_mode])
+                database = _load_database_for_mode(system_name, backend_name, version, database_mode)
                 nextn_accept_rates = [float(x) for x in nextn_accept_rates.split(",")]
                 model_config = config.ModelConfig(
                     tp_size=tp_size,
@@ -404,9 +444,7 @@ class EventFn:
             LogCapture() as (logger, log_buffer),
         ):
             try:
-                database = copy.deepcopy(get_database(system_name, backend_name, version))
-                assert database is not None
-                database.set_default_database_mode(common.DatabaseMode[database_mode])
+                database = _load_database_for_mode(system_name, backend_name, version, database_mode)
                 nextn_accept_rates = [float(x) for x in nextn_accept_rates.split(",")]
                 model_config = config.ModelConfig(
                     gemm_quant_mode=common.GEMMQuantMode[gemm_quant_mode],
@@ -579,14 +617,18 @@ class EventFn:
             LogCapture() as (logger, log_buffer),
         ):
             try:
-                prefill_database = copy.deepcopy(
-                    get_database(prefill_system_name, prefill_backend_name, prefill_version)
+                prefill_database = _load_database_for_mode(
+                    prefill_system_name,
+                    prefill_backend_name,
+                    prefill_version,
+                    prefill_database_mode,
                 )
-                decode_database = copy.deepcopy(get_database(decode_system_name, decode_backend_name, decode_version))
-                assert prefill_database is not None
-                assert decode_database is not None
-                prefill_database.set_default_database_mode(common.DatabaseMode[prefill_database_mode])
-                decode_database.set_default_database_mode(common.DatabaseMode[decode_database_mode])
+                decode_database = _load_database_for_mode(
+                    decode_system_name,
+                    decode_backend_name,
+                    decode_version,
+                    decode_database_mode,
+                )
                 nextn_accept_rates = [float(x) for x in nextn_accept_rates.split(",")]
                 prefill_model_config = config.ModelConfig(
                     tp_size=prefill_tp_size,
@@ -927,11 +969,12 @@ class EventFn:
 
                 # prefill
                 prefill_model = get_model(model_path, prefill_model_config, prefill_backend_name)
-                prefill_database = copy.deepcopy(
-                    get_database(prefill_system_name, prefill_backend_name, prefill_version)
+                prefill_database = _load_database_for_mode(
+                    prefill_system_name,
+                    prefill_backend_name,
+                    prefill_version,
+                    prefill_database_mode,
                 )
-                assert prefill_database is not None
-                prefill_database.set_default_database_mode(common.DatabaseMode[prefill_database_mode])
                 prefill_backend = get_backend(prefill_backend_name)
                 prefill_session = InferenceSession(prefill_model, prefill_database, prefill_backend)
                 prefill_results_df = pd.DataFrame(columns=common.ColumnsStatic)
@@ -965,9 +1008,12 @@ class EventFn:
 
                 # decode
                 decode_model = get_model(model_path, decode_model_config, decode_backend_name)
-                decode_database = copy.deepcopy(get_database(decode_system_name, decode_backend_name, decode_version))
-                assert decode_database is not None
-                decode_database.set_default_database_mode(common.DatabaseMode[decode_database_mode])
+                decode_database = _load_database_for_mode(
+                    decode_system_name,
+                    decode_backend_name,
+                    decode_version,
+                    decode_database_mode,
+                )
                 decode_backend = get_backend(decode_backend_name)
                 decode_session = InferenceSession(decode_model, decode_database, decode_backend)
                 decode_results_df = pd.DataFrame(columns=common.ColumnsStatic)
@@ -1166,23 +1212,13 @@ class EventFn:
     @staticmethod
     def update_quant_mode_choices(model_path, system_name, backend_name, version, enable_wideep):
         if version is None:
-            return (
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(value=False, interactive=False),
-            )
+            return _empty_quant_mode_updates()
+        if version == ESTIMATE_DATABASE_VERSION:
+            return _estimate_quant_mode_updates()
         # Load only the specific database we need
         database = get_database(system_name, backend_name, version)
         if database is None:
-            return (
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(choices=[], value=None, interactive=True),
-                gr.update(value=False, interactive=False),
-            )
+            return _empty_quant_mode_updates()
         supported_quant_mode = database.supported_quant_mode
 
         model_family = get_model_family(model_path)
@@ -1259,9 +1295,7 @@ class EventFn:
 
     @staticmethod
     def update_backend_choices(system_name):
-        # Use get_supported_databases() to avoid loading all databases
-        supported_databases = get_supported_databases()
-        backend_choices = sorted(supported_databases[system_name].keys(), reverse=True)
+        backend_choices = get_webapp_backend_choices(system_name, reverse=True)
         return gr.update(choices=backend_choices, value=None, interactive=True), gr.update(
             choices=None, value=None, interactive=True
         )
@@ -1273,9 +1307,7 @@ class EventFn:
 
     @staticmethod
     def update_version_choices(system_name, backend_name):
-        # Use get_supported_databases() to avoid loading all databases
-        supported_databases = get_supported_databases()
-        version_choices = sorted(supported_databases[system_name][backend_name], reverse=True)
+        version_choices = get_webapp_version_choices(system_name, backend_name, reverse=True)
         return gr.update(choices=version_choices, value=None, interactive=True)
 
     @staticmethod

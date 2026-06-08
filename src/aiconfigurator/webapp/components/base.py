@@ -5,7 +5,12 @@ import gradio as gr
 
 from aiconfigurator.sdk import common
 from aiconfigurator.sdk.common import get_default_models
-from aiconfigurator.sdk.perf_database import get_database, get_supported_databases
+from aiconfigurator.sdk.perf_database import get_database
+from aiconfigurator.webapp.database_options import (
+    get_webapp_backend_choices,
+    get_webapp_system_choices,
+    get_webapp_version_choices,
+)
 
 
 def create_model_path_config(app_config):
@@ -25,13 +30,12 @@ def create_model_path_config(app_config):
 
 def create_system_config(app_config, gpu_config=False):
     """create system config components"""
-    # Use get_supported_databases() to avoid loading all databases at startup
-    supported_databases = get_supported_databases()
-    system_choices = sorted(supported_databases.keys())
+    # Include estimate-only systems such as S5000 without loading all databases at startup.
+    system_choices = get_webapp_system_choices()
     default_system = "h200_sxm" if "h200_sxm" in system_choices else system_choices[0]
-    backend_choices = sorted(supported_databases[default_system].keys())
+    backend_choices = get_webapp_backend_choices(default_system)
     default_backend = "trtllm" if "trtllm" in backend_choices else backend_choices[0]
-    version_choices = sorted(supported_databases[default_system][default_backend])
+    version_choices = get_webapp_version_choices(default_system, default_backend)
     default_version = version_choices[-1]
 
     with gr.Accordion("System config"):
@@ -98,13 +102,12 @@ def create_system_config(app_config, gpu_config=False):
 
 def create_model_quant_config(app_config):
     """create model quantization config components"""
-    # Use get_supported_databases() for structure, then load only the specific database needed
-    supported_databases = get_supported_databases()
-    system_choices = sorted(supported_databases.keys())
+    # Use WebApp database choices for structure, then load only the default database needed.
+    system_choices = get_webapp_system_choices()
     default_system = "h200_sxm" if "h200_sxm" in system_choices else system_choices[0]
-    backend_choices = sorted(supported_databases[default_system].keys())
+    backend_choices = get_webapp_backend_choices(default_system)
     default_backend = "trtllm" if "trtllm" in backend_choices else backend_choices[0]
-    version_choices = sorted(supported_databases[default_system][default_backend])
+    version_choices = get_webapp_version_choices(default_system, default_backend)
     default_version = version_choices[-1]
     # Load only the specific database we need
     database = get_database(default_system, default_backend, default_version)

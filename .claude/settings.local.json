@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"E:/CodeStore/aiconfigurator/.claude/worktrees/agent-aadeddf71cc9d6844\" status --short)",
+      "Bash(pytest tests/unit/sdk/test_common.py -q)",
+      "Bash(python -m aiconfigurator.cli.main default --model-path MiniMaxAI/MiniMax-M2.5 --total-gpus 16 --system s5000 --backend auto --database-mode HYBRID --isl 4000 --osl 1000 --ttft 2000 --tpot 35)",
+      "Bash(python -m aiconfigurator.cli.main default --model-path MiniMaxAI/MiniMax-M2.5 --total-gpus 16 --system s5000 --backend auto --database-mode HYBRID --isl 4000 --osl 1000 --ttft 2000 --tpot 35 --top-n 20)",
+      "Bash(python -m aiconfigurator.cli.main default --model-path MiniMaxAI/MiniMax-M2.5 --total-gpus 16 --system s5000 --backend auto --database-mode HYBRID --isl 4000 --osl 1000 --ttft 2000 --tpot 35 --top-n 200)",
+      "Bash(python -m aiconfigurator.cli.main default --model-path Qwen/Qwen3.5-397B-A17B --total-gpus 16 --system s5000 --backend auto --database-mode HYBRID --isl 4000 --osl 1000 --ttft 2000 --tpot 35 --top-n 200)",
+      "Bash(python -m aiconfigurator.cli.main default --model-path Qwen/Qwen3.5-397B-A17B --total-gpus 16 --system s5000 --backend vllm --database-mode HYBRID --isl 4000 --osl 1000 --ttft 2000 --tpot 35 --top-n 50)"
+    ]
+  }
+}

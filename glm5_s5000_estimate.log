@@ -1,0 +1,1383 @@
+<frozen runpy>:128: RuntimeWarning: 'aiconfigurator.cli.main' found in sys.modules after import of package 'aiconfigurator.cli', but prior to execution of 'aiconfigurator.cli.main'; this may result in unpredictable behaviour
+15:44:00 [aiconfigurator] [I] [main.py:1504] Loading Dynamo AIConfigurator version: 0.7.0
+15:44:00 [aiconfigurator] [I] [main.py:1505] Number of top configurations to output: 50 (change with --top-n)
+15:44:00 [aiconfigurator] [I] [utils.py:794] Quant inference result: quant_algo=None, kv_cache_quant_algo=None, quant_dynamic=None
+15:44:00 [aiconfigurator] [I] [utils.py:893] Loaded model config for zai-org/GLM-5: architecture=GlmMoeDsaForCausalLM, layers=78, n=64, n_kv=64, d=64, hidden_size=6144, inter_size=12288, vocab=154880, context=202752, topk=8, num_experts=256, moe_inter_size=2048, extra_params={'q_lora_rank': 2048, 'kv_lora_rank': 512, 'qk_nope_head_dim': 192, 'qk_rope_head_dim': 64, 'v_head_dim': 256, 'index_head_dim': 128, 'index_n_heads': 32, 'index_topk': 2048}
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='trtllm'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='trtllm'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Agg worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='trtllm'
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='trtllm'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='trtllm'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Prefill worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Decode worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Agg worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Agg worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Prefill worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Decode worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Prefill worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Decode worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='vllm'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='vllm'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Agg worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='vllm'
+15:44:00 [aiconfigurator] [E] [perf_database.py:224] no valid versions parsed for system='s5000', backend='vllm'
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='vllm'
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Prefill worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [I] [models.py:149] Resolved quant modes for Decode worker: gemm=GEMMQuantMode.float16 moe=MoEQuantMode.float16 kvcache=KVCacheQuantMode.float16 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+15:44:00 [aiconfigurator] [I] [main.py:1028] Starting experiment: agg_trtllm
+15:44:00 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for agg_zai-org/GLM-5_s5000_trtllm_None_4000_1000_0_2000.0_35.0 in agg mode (autoscale=False)...
+15:44:00 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='trtllm'
+15:44:00 [aiconfigurator] [I] [task.py:1145] Task agg_zai-org/GLM-5_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Using database mode: HYBRID
+15:44:00 [aiconfigurator] [I] [task.py:1191] Task agg_zai-org/GLM-5_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Listing parallelism configs to evaluate: 
+15:44:00 [aiconfigurator] [I] [task.py:1194] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1194] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:00 [aiconfigurator] [I] [task.py:1194] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1194] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:00 [aiconfigurator] [I] [task.py:1194] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:00 [aiconfigurator] [I] [task.py:1194] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1194] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:00 [aiconfigurator] [I] [task.py:1194] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:00 [aiconfigurator] [I] [task.py:1194] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:00 [aiconfigurator] [I] [task.py:1194] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1194] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:00 [aiconfigurator] [I] [task.py:1194] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1194] 13) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:00 [aiconfigurator] [I] [task.py:1194] 14) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:00 [aiconfigurator] [I] [task.py:1194] 15) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1194] 16) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:00 [aiconfigurator] [I] [task.py:1194] 17) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:00 [aiconfigurator] [I] [task.py:1194] 18) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:00 [aiconfigurator] [I] [task.py:1194] 19) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:00 [aiconfigurator] [I] [task.py:1196] Task agg_zai-org/GLM-5_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Running agg pareto
+15:44:06 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for agg_zai-org/GLM-5_s5000_trtllm_None_4000_1000_0_2000.0_35.0 in agg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 162, in agg_pareto
+    raise RuntimeError(
+    ...<3 lines>...
+    )
+RuntimeError: No results found: the model does not fit in GPU memory for any parallel configuration. Try increasing --total-gpus, using a quantized model, or using a system with more VRAM per GPU.
+15:44:06 [aiconfigurator] [E] [main.py:1053] Error running experiment agg_trtllm
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 162, in agg_pareto
+    raise RuntimeError(
+    ...<3 lines>...
+    )
+RuntimeError: No results found: the model does not fit in GPU memory for any parallel configuration. Try increasing --total-gpus, using a quantized model, or using a system with more VRAM per GPU.
+15:44:06 [aiconfigurator] [I] [main.py:1028] Starting experiment: disagg_trtllm
+15:44:06 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0 in disagg mode (autoscale=False)...
+15:44:06 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='trtllm'
+15:44:06 [aiconfigurator] [I] [task.py:1254] Task disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Using prefill database mode: HYBRID
+15:44:06 [aiconfigurator] [I] [task.py:1302] Task disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Listing prefill parallelism configs to evaluate: 
+15:44:06 [aiconfigurator] [I] [task.py:1305] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1305] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1305] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1305] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1305] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1305] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1305] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1305] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1305] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1305] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1305] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1305] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1305] 13) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1305] 14) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1305] 15) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1305] 16) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1305] 17) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1305] 18) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1305] 19) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='trtllm'
+15:44:06 [aiconfigurator] [I] [task.py:1316] Task disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Using decode database mode: HYBRID
+15:44:06 [aiconfigurator] [I] [task.py:1364] Task disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Listing decode parallelism configs to evaluate: 
+15:44:06 [aiconfigurator] [I] [task.py:1367] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1367] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1367] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1367] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1367] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1367] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1367] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1367] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1367] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1367] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1367] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1367] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1367] 13) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1367] 14) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1367] 15) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1367] 16) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1367] 17) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1367] 18) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1367] 19) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1382] Task disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0: Running disagg pareto
+15:44:06 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for disagg_zai-org/GLM-5_s5000_s5000_trtllm_None_4000_1000_0_2000.0_35.0 in disagg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 437, in get_worker_candidates
+    raise RuntimeError(
+    ...<3 lines>...
+    )
+RuntimeError: No results found: the model does not fit in GPU memory for any parallel configuration. Try increasing --total-gpus, using a quantized model, or using a system with more VRAM per GPU.
+15:44:06 [aiconfigurator] [E] [main.py:1053] Error running experiment disagg_trtllm
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 437, in get_worker_candidates
+    raise RuntimeError(
+    ...<3 lines>...
+    )
+RuntimeError: No results found: the model does not fit in GPU memory for any parallel configuration. Try increasing --total-gpus, using a quantized model, or using a system with more VRAM per GPU.
+15:44:06 [aiconfigurator] [I] [main.py:1028] Starting experiment: agg_sglang
+15:44:06 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0 in agg mode (autoscale=False)...
+15:44:06 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:06 [aiconfigurator] [I] [task.py:1145] Task agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0: Using database mode: HYBRID
+15:44:06 [aiconfigurator] [I] [task.py:1191] Task agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0: Listing parallelism configs to evaluate: 
+15:44:06 [aiconfigurator] [I] [task.py:1194] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1194] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 13) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 14) tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 15) tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 16) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1194] 17) tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 18) tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 19) tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 20) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 21) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 22) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 23) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1194] 24) tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 25) tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 26) tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1194] 27) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:06 [aiconfigurator] [I] [task.py:1194] 28) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:06 [aiconfigurator] [I] [task.py:1194] 29) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:06 [aiconfigurator] [I] [task.py:1194] 30) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:06 [aiconfigurator] [I] [task.py:1196] Task agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0: Running agg pareto
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4, skip this combination
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2, skip this combination
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1, skip this combination
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8, skip this combination
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4, skip this combination
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2, skip this combination
+15:44:09 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1, skip this combination
+15:44:10 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8, skip this combination
+15:44:10 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4, skip this combination
+15:44:10 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2, skip this combination
+15:44:10 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1, skip this combination
+15:44:11 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0 in agg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 47, in run_agg
+    summary = self._agg_cache[isl][osl][b][ctx_tokens]
+              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 4000
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 114, in agg_pareto
+    summary = sess.find_best_agg_result_under_constraints(
+        runtime_config=overwritten_runtime_config,
+    ...<5 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 128, in find_best_agg_result_under_constraints
+    return self._backend.find_best_agg_result_under_constraints(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 464, in find_best_agg_result_under_constraints
+    summary = self.run_agg(
+        model=model,
+    ...<8 lines>...
+        ctx_tokens=ctx_tokens,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 228, in run_agg
+    mix_step_latency_ms, mix_step_energy_wms = _get_mix_step_latency(
+                                               ~~~~~~~~~~~~~~~~~~~~~^
+        model, database, num_mix_ctx_tokens, num_mix_gen_tokens, isl, osl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 104, in _get_mix_step_latency
+    summary = self.run_static(
+        model,
+    ...<10 lines>...
+        mode="static_ctx",
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 158, in agg_pareto
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:11 [aiconfigurator] [E] [main.py:1053] Error running experiment agg_sglang
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 47, in run_agg
+    summary = self._agg_cache[isl][osl][b][ctx_tokens]
+              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 4000
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 114, in agg_pareto
+    summary = sess.find_best_agg_result_under_constraints(
+        runtime_config=overwritten_runtime_config,
+    ...<5 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 128, in find_best_agg_result_under_constraints
+    return self._backend.find_best_agg_result_under_constraints(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 464, in find_best_agg_result_under_constraints
+    summary = self.run_agg(
+        model=model,
+    ...<8 lines>...
+        ctx_tokens=ctx_tokens,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 228, in run_agg
+    mix_step_latency_ms, mix_step_energy_wms = _get_mix_step_latency(
+                                               ~~~~~~~~~~~~~~~~~~~~~^
+        model, database, num_mix_ctx_tokens, num_mix_gen_tokens, isl, osl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 104, in _get_mix_step_latency
+    summary = self.run_static(
+        model,
+    ...<10 lines>...
+        mode="static_ctx",
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 158, in agg_pareto
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:11 [aiconfigurator] [I] [main.py:1028] Starting experiment: agg_sglang_deepep
+15:44:11 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0 in agg mode (autoscale=False)...
+15:44:11 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:11 [aiconfigurator] [I] [task.py:1145] Task agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0: Using database mode: HYBRID
+15:44:11 [aiconfigurator] [I] [task.py:1191] Task agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0: Listing parallelism configs to evaluate: 
+15:44:11 [aiconfigurator] [I] [task.py:1194] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:11 [aiconfigurator] [I] [task.py:1194] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:11 [aiconfigurator] [I] [task.py:1194] 3) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:11 [aiconfigurator] [I] [task.py:1194] 4) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:11 [aiconfigurator] [I] [task.py:1194] 5) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:11 [aiconfigurator] [I] [task.py:1194] 6) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:11 [aiconfigurator] [I] [task.py:1194] 7) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:11 [aiconfigurator] [I] [task.py:1194] 8) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:11 [aiconfigurator] [I] [task.py:1194] 9) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:11 [aiconfigurator] [I] [task.py:1194] 10) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:11 [aiconfigurator] [I] [task.py:1196] Task agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0: Running agg pareto
+15:44:12 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4, skip this combination
+15:44:12 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8, skip this combination
+15:44:13 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8, skip this combination
+15:44:13 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for agg_zai-org/GLM-5_s5000_sglang_None_4000_1000_0_2000.0_35.0 in agg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 47, in run_agg
+    summary = self._agg_cache[isl][osl][b][ctx_tokens]
+              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 4000
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 114, in agg_pareto
+    summary = sess.find_best_agg_result_under_constraints(
+        runtime_config=overwritten_runtime_config,
+    ...<5 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 128, in find_best_agg_result_under_constraints
+    return self._backend.find_best_agg_result_under_constraints(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 464, in find_best_agg_result_under_constraints
+    summary = self.run_agg(
+        model=model,
+    ...<8 lines>...
+        ctx_tokens=ctx_tokens,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 228, in run_agg
+    mix_step_latency_ms, mix_step_energy_wms = _get_mix_step_latency(
+                                               ~~~~~~~~~~~~~~~~~~~~~^
+        model, database, num_mix_ctx_tokens, num_mix_gen_tokens, isl, osl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 104, in _get_mix_step_latency
+    summary = self.run_static(
+        model,
+    ...<10 lines>...
+        mode="static_ctx",
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 158, in agg_pareto
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [E] [main.py:1053] Error running experiment agg_sglang_deepep
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 47, in run_agg
+    summary = self._agg_cache[isl][osl][b][ctx_tokens]
+              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 4000
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 114, in agg_pareto
+    summary = sess.find_best_agg_result_under_constraints(
+        runtime_config=overwritten_runtime_config,
+    ...<5 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 128, in find_best_agg_result_under_constraints
+    return self._backend.find_best_agg_result_under_constraints(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 464, in find_best_agg_result_under_constraints
+    summary = self.run_agg(
+        model=model,
+    ...<8 lines>...
+        ctx_tokens=ctx_tokens,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 228, in run_agg
+    mix_step_latency_ms, mix_step_energy_wms = _get_mix_step_latency(
+                                               ~~~~~~~~~~~~~~~~~~~~~^
+        model, database, num_mix_ctx_tokens, num_mix_gen_tokens, isl, osl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\sglang_backend.py", line 104, in _get_mix_step_latency
+    summary = self.run_static(
+        model,
+    ...<10 lines>...
+        mode="static_ctx",
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 158, in agg_pareto
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [I] [main.py:1028] Starting experiment: disagg_sglang
+15:44:13 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0 in disagg mode (autoscale=False)...
+15:44:13 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:13 [aiconfigurator] [I] [task.py:1254] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Using prefill database mode: HYBRID
+15:44:13 [aiconfigurator] [I] [task.py:1302] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Listing prefill parallelism configs to evaluate: 
+15:44:13 [aiconfigurator] [I] [task.py:1305] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 13) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 14) tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 15) tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 16) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 17) tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 18) tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 19) tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 20) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 21) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 22) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 23) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 24) tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 25) tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 26) tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 27) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 28) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 29) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 30) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:13 [aiconfigurator] [I] [task.py:1316] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Using decode database mode: HYBRID
+15:44:13 [aiconfigurator] [I] [task.py:1364] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Listing decode parallelism configs to evaluate: 
+15:44:13 [aiconfigurator] [I] [task.py:1367] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 13) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 14) tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 15) tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 16) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 17) tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 18) tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 19) tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 20) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 21) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 22) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 23) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 24) tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 25) tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 26) tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 27) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 28) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 29) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 30) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [W] [task.py:1376] SGLang non-wideep disaggregated serving requires the same TP size for prefill and decode workers. Configurations with different TP sizes will be filtered out. 
+15:44:13 [aiconfigurator] [I] [task.py:1382] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Running disagg pareto
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0 in disagg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 403, in get_worker_candidates
+    summary = sess.run_static(
+        mode=mode,
+        runtime_config=overwritten_runtime_config,
+        latency_correction_scale=latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 72, in run_static
+    return self._backend.run_static(
+           ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, mode, stride, latency_correction_scale
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 433, in get_worker_candidates
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [E] [main.py:1053] Error running experiment disagg_sglang
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 403, in get_worker_candidates
+    summary = sess.run_static(
+        mode=mode,
+        runtime_config=overwritten_runtime_config,
+        latency_correction_scale=latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 72, in run_static
+    return self._backend.run_static(
+           ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, mode, stride, latency_correction_scale
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 433, in get_worker_candidates
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [I] [main.py:1028] Starting experiment: disagg_sglang_deepep
+15:44:13 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0 in disagg mode (autoscale=False)...
+15:44:13 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:13 [aiconfigurator] [I] [task.py:1254] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Using prefill database mode: HYBRID
+15:44:13 [aiconfigurator] [I] [task.py:1302] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Listing prefill parallelism configs to evaluate: 
+15:44:13 [aiconfigurator] [I] [task.py:1305] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1305] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 3) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 4) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 5) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1305] 6) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 7) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 8) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1305] 9) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1305] 10) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='sglang'
+15:44:13 [aiconfigurator] [I] [task.py:1316] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Using decode database mode: HYBRID
+15:44:13 [aiconfigurator] [I] [task.py:1364] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Listing decode parallelism configs to evaluate: 
+15:44:13 [aiconfigurator] [I] [task.py:1367] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1367] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 3) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 4) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 5) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1367] 6) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 7) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 8) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1367] 9) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1367] 10) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [W] [task.py:1376] SGLang non-wideep disaggregated serving requires the same TP size for prefill and decode workers. Configurations with different TP sizes will be filtered out. 
+15:44:13 [aiconfigurator] [I] [task.py:1382] Task disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0: Running disagg pareto
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8; skipping this combination. Error: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for disagg_zai-org/GLM-5_s5000_s5000_sglang_None_4000_1000_0_2000.0_35.0 in disagg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 403, in get_worker_candidates
+    summary = sess.run_static(
+        mode=mode,
+        runtime_config=overwritten_runtime_config,
+        latency_correction_scale=latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 72, in run_static
+    return self._backend.run_static(
+           ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, mode, stride, latency_correction_scale
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 433, in get_worker_candidates
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [E] [main.py:1053] Error running experiment disagg_sglang_deepep
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 403, in get_worker_candidates
+    summary = sess.run_static(
+        mode=mode,
+        runtime_config=overwritten_runtime_config,
+        latency_correction_scale=latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 72, in run_static
+    return self._backend.run_static(
+           ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, mode, stride, latency_correction_scale
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 749, in query
+    assert self._attention_tp_size == 1 or self._attention_dp_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 433, in get_worker_candidates
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:13 [aiconfigurator] [I] [main.py:1028] Starting experiment: agg_vllm
+15:44:13 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for agg_zai-org/GLM-5_s5000_vllm_None_4000_1000_0_2000.0_35.0 in agg mode (autoscale=False)...
+15:44:13 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='vllm'
+15:44:13 [aiconfigurator] [I] [task.py:1145] Task agg_zai-org/GLM-5_s5000_vllm_None_4000_1000_0_2000.0_35.0: Using database mode: HYBRID
+15:44:13 [aiconfigurator] [I] [task.py:1191] Task agg_zai-org/GLM-5_s5000_vllm_None_4000_1000_0_2000.0_35.0: Listing parallelism configs to evaluate: 
+15:44:13 [aiconfigurator] [I] [task.py:1194] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1194] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 13) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 14) tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 15) tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 16) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1194] 17) tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 18) tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 19) tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 20) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 21) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 22) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 23) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1194] 24) tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 25) tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 26) tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1194] 27) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:13 [aiconfigurator] [I] [task.py:1194] 28) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:13 [aiconfigurator] [I] [task.py:1194] 29) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:13 [aiconfigurator] [I] [task.py:1194] 30) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:13 [aiconfigurator] [I] [task.py:1196] Task agg_zai-org/GLM-5_s5000_vllm_None_4000_1000_0_2000.0_35.0: Running agg pareto
+15:44:14 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2, skip this combination
+15:44:15 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4, skip this combination
+15:44:15 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2, skip this combination
+15:44:16 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2, skip this combination
+15:44:16 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4, skip this combination
+15:44:16 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2, skip this combination
+15:44:17 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2, skip this combination
+15:44:17 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4, skip this combination
+15:44:17 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2, skip this combination
+15:44:18 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4, skip this combination
+15:44:18 [aiconfigurator] [I] [pareto_analysis.py:141] Error getting candidate workers with parallel config: tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2, skip this combination
+15:44:18 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for agg_zai-org/GLM-5_s5000_vllm_None_4000_1000_0_2000.0_35.0 in agg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 49, in run_agg
+    summary = self._agg_cache[isl][osl][b][ctx_tokens]
+              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 4000
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 114, in agg_pareto
+    summary = sess.find_best_agg_result_under_constraints(
+        runtime_config=overwritten_runtime_config,
+    ...<5 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 128, in find_best_agg_result_under_constraints
+    return self._backend.find_best_agg_result_under_constraints(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 465, in find_best_agg_result_under_constraints
+    summary = self.run_agg(
+        model=model,
+    ...<8 lines>...
+        ctx_tokens=ctx_tokens,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 229, in run_agg
+    mix_step_latency_ms, mix_step_energy_wms = _get_mix_step_latency(
+                                               ~~~~~~~~~~~~~~~~~~~~~^
+        model, database, num_mix_ctx_tokens, num_mix_gen_tokens, isl, osl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 106, in _get_mix_step_latency
+    summary = self.run_static(
+        model,
+    ...<10 lines>...
+        mode="static_ctx",
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 710, in query
+    assert self._moe_tp_size == 1 or self._moe_ep_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: vllm does not support MoE TP and MoE EP at the same time
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 158, in agg_pareto
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [E] [main.py:1053] Error running experiment agg_vllm
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 49, in run_agg
+    summary = self._agg_cache[isl][osl][b][ctx_tokens]
+              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 4000
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 114, in agg_pareto
+    summary = sess.find_best_agg_result_under_constraints(
+        runtime_config=overwritten_runtime_config,
+    ...<5 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 128, in find_best_agg_result_under_constraints
+    return self._backend.find_best_agg_result_under_constraints(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 465, in find_best_agg_result_under_constraints
+    summary = self.run_agg(
+        model=model,
+    ...<8 lines>...
+        ctx_tokens=ctx_tokens,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 229, in run_agg
+    mix_step_latency_ms, mix_step_energy_wms = _get_mix_step_latency(
+                                               ~~~~~~~~~~~~~~~~~~~~~^
+        model, database, num_mix_ctx_tokens, num_mix_gen_tokens, isl, osl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\vllm_backend.py", line 106, in _get_mix_step_latency
+    summary = self.run_static(
+        model,
+    ...<10 lines>...
+        mode="static_ctx",
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 710, in query
+    assert self._moe_tp_size == 1 or self._moe_ep_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: vllm does not support MoE TP and MoE EP at the same time
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1433, in run
+    result = self.run_agg(task_config.config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1200, in run_agg
+    result_df = pa.agg_pareto(
+        model_path=task_config.model_path,
+    ...<7 lines>...
+        max_seq_len=max_seq_len,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 158, in agg_pareto
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [I] [main.py:1028] Starting experiment: disagg_vllm
+15:44:18 [aiconfigurator] [I] [task.py:1423] Starting Pareto Analysis for disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0 in disagg mode (autoscale=False)...
+15:44:18 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='vllm'
+15:44:18 [aiconfigurator] [I] [task.py:1254] Task disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0: Using prefill database mode: HYBRID
+15:44:18 [aiconfigurator] [I] [task.py:1302] Task disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0: Listing prefill parallelism configs to evaluate: 
+15:44:18 [aiconfigurator] [I] [task.py:1305] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1305] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 13) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 14) tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 15) tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 16) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1305] 17) tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 18) tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 19) tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 20) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 21) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 22) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 23) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1305] 24) tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 25) tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 26) tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1305] 27) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1305] 28) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1305] 29) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1305] 30) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [E] [perf_database.py:260] No database version available for system='s5000', backend='vllm'
+15:44:18 [aiconfigurator] [I] [task.py:1316] Task disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0: Using decode database mode: HYBRID
+15:44:18 [aiconfigurator] [I] [task.py:1364] Task disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0: Listing decode parallelism configs to evaluate: 
+15:44:18 [aiconfigurator] [I] [task.py:1367] 1) tp=1, pp=1, dp=1, moe_tp=1, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 2) tp=1, pp=1, dp=2, moe_tp=1, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 3) tp=1, pp=1, dp=2, moe_tp=2, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 4) tp=1, pp=1, dp=4, moe_tp=1, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 5) tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 6) tp=1, pp=1, dp=4, moe_tp=4, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 7) tp=1, pp=1, dp=8, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1367] 8) tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 9) tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 10) tp=1, pp=1, dp=8, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 11) tp=2, pp=1, dp=1, moe_tp=1, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 12) tp=2, pp=1, dp=1, moe_tp=2, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 13) tp=2, pp=1, dp=2, moe_tp=1, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 14) tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 15) tp=2, pp=1, dp=2, moe_tp=4, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 16) tp=2, pp=1, dp=4, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1367] 17) tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 18) tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 19) tp=2, pp=1, dp=4, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 20) tp=4, pp=1, dp=1, moe_tp=1, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 21) tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 22) tp=4, pp=1, dp=1, moe_tp=4, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 23) tp=4, pp=1, dp=2, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1367] 24) tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 25) tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 26) tp=4, pp=1, dp=2, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1367] 27) tp=8, pp=1, dp=1, moe_tp=1, moe_ep=8
+15:44:18 [aiconfigurator] [I] [task.py:1367] 28) tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4
+15:44:18 [aiconfigurator] [I] [task.py:1367] 29) tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2
+15:44:18 [aiconfigurator] [I] [task.py:1367] 30) tp=8, pp=1, dp=1, moe_tp=8, moe_ep=1
+15:44:18 [aiconfigurator] [I] [task.py:1382] Task disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0: Running disagg pareto
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=1, pp=1, dp=4, moe_tp=2, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=1, pp=1, dp=8, moe_tp=2, moe_ep=4; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=1, pp=1, dp=8, moe_tp=4, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=2, moe_tp=2, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=2, moe_ep=4; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=2, pp=1, dp=4, moe_tp=4, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=1, moe_tp=2, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=2, moe_ep=4; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=4, pp=1, dp=2, moe_tp=4, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=8, pp=1, dp=1, moe_tp=2, moe_ep=4; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [W] [inference_session.py:418] Error getting candidate workers with parallel config: tp=8, pp=1, dp=1, moe_tp=4, moe_ep=2; skipping this combination. Error: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [E] [task.py:1439] Error running pareto analysis for disagg_zai-org/GLM-5_s5000_s5000_vllm_None_4000_1000_0_2000.0_35.0 in disagg mode
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 403, in get_worker_candidates
+    summary = sess.run_static(
+        mode=mode,
+        runtime_config=overwritten_runtime_config,
+        latency_correction_scale=latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 72, in run_static
+    return self._backend.run_static(
+           ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, mode, stride, latency_correction_scale
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 710, in query
+    assert self._moe_tp_size == 1 or self._moe_ep_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: vllm does not support MoE TP and MoE EP at the same time
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 433, in get_worker_candidates
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [E] [main.py:1053] Error running experiment disagg_vllm
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 403, in get_worker_candidates
+    summary = sess.run_static(
+        mode=mode,
+        runtime_config=overwritten_runtime_config,
+        latency_correction_scale=latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 72, in run_static
+    return self._backend.run_static(
+           ~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._model, self._database, runtime_config, mode, stride, latency_correction_scale
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 223, in run_static
+    ) = self._run_static_breakdown(model, database, runtime_config, mode, stride, latency_correction_scale)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 131, in _run_static_breakdown
+    context_latency_dict, context_energy_wms_dict = self._run_context_phase(
+                                                    ~~~~~~~~~~~~~~~~~~~~~~~^
+        model, database, runtime_config, batch_size, isl, prefix
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\backends\base_backend.py", line 55, in _run_context_phase
+    result = op.query(
+        database,
+    ...<6 lines>...
+        seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\operations.py", line 710, in query
+    assert self._moe_tp_size == 1 or self._moe_ep_size == 1, (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: vllm does not support MoE TP and MoE EP at the same time
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\cli\main.py", line 1030, in _execute_task_configs
+    task_result = runner.run(task_config)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1435, in run
+    result = self.run_disagg(task_config.config, autoscale=autoscale)
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\task.py", line 1383, in run_disagg
+    result_df = pa.disagg_pareto(
+        model_path=task_config.model_path,
+    ...<28 lines>...
+        target_tpot=task_config.runtime_config.tpot if autoscale else None,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\pareto_analysis.py", line 298, in disagg_pareto
+    summary = disagg_sess.find_best_disagg_result_under_constraints(
+        model_path=model_path,
+    ...<14 lines>...
+        target_tpot=target_tpot,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 743, in find_best_disagg_result_under_constraints
+    prefill_summary_df = self.get_worker_candidates(
+        model_path=model_path,
+    ...<5 lines>...
+        latency_correction_scale=self._prefill_latency_correction_scale,
+    )
+  File "E:\CodeStore\aiconfigurator\src\aiconfigurator\sdk\inference_session.py", line 433, in get_worker_candidates
+    raise RuntimeError(
+        f"No results found for any parallel configuration. Showing last exception: {exceptions[-1]}"
+    ) from exceptions[-1]
+RuntimeError: No results found for any parallel configuration. Showing last exception: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [E] [main.py:1066] No successful experiment runs to compare.
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment agg_trtllm failed: No results found: the model does not fit in GPU memory for any parallel configuration. Try increasing --total-gpus, using a quantized model, or using a system with more VRAM per GPU.
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment disagg_trtllm failed: No results found: the model does not fit in GPU memory for any parallel configuration. Try increasing --total-gpus, using a quantized model, or using a system with more VRAM per GPU.
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment agg_sglang failed: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment agg_sglang_deepep failed: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment disagg_sglang failed: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment disagg_sglang_deepep failed: No results found for any parallel configuration. Showing last exception: We don't enable the path for non-wideep SGLang to support TP>1 and DP>1 for attn simultaneously
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment agg_vllm failed: No results found for any parallel configuration. Showing last exception: vllm does not support MoE TP and MoE EP at the same time
+15:44:18 [aiconfigurator] [E] [main.py:1068]   -> Experiment disagg_vllm failed: No results found for any parallel configuration. Showing last exception: vllm does not support MoE TP and MoE EP at the same time

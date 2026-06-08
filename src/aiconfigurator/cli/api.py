@@ -10,7 +10,9 @@ This module provides simple function interfaces to the CLI's "default", "exp",
 
 from __future__ import annotations
 
+import copy
 import logging
+import os
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -27,6 +29,7 @@ from aiconfigurator.sdk.models import check_is_moe
 from aiconfigurator.sdk.task import (
     DEFAULT_DECODE_LATENCY_CORRECTION_SCALE,
     DEFAULT_PREFILL_LATENCY_CORRECTION_SCALE,
+    ESTIMATE_DATABASE_VERSION,
     TaskConfig,
 )
 
@@ -692,8 +695,10 @@ def cli_estimate(
     from aiconfigurator.sdk.backends.factory import get_backend
     from aiconfigurator.sdk.models import get_model
     from aiconfigurator.sdk.perf_database import (
+        PerfDatabase,
         get_database,
         get_latest_database_version,
+        get_systems_paths,
         set_systems_paths,
     )
 
@@ -705,21 +710,35 @@ def cli_estimate(
     if resolved_version is None:
         resolved_version = get_latest_database_version(system=system_name, backend=backend_name)
         if resolved_version is None:
-            raise ValueError(
-                f"No database found for system={system_name}, backend={backend_name}. "
-                "Check --systems-paths or available databases."
-            )
+            if database_mode == "SILICON":
+                raise ValueError(
+                    f"No database found for system={system_name}, backend={backend_name}. "
+                    "Check --systems-paths or available databases."
+                )
+            resolved_version = ESTIMATE_DATABASE_VERSION
 
     def _load_database(sys_name: str):
-        db = get_database(sys_name, backend_name, resolved_version)
+        db = None
+        if database_mode == "SILICON" or (
+            database_mode == "HYBRID" and resolved_version != ESTIMATE_DATABASE_VERSION
+        ):
+            db = get_database(sys_name, backend_name, resolved_version)
         if db is None:
-            raise ValueError(
-                f"Failed to load perf database for system={sys_name}, "
-                f"backend={backend_name}, version={resolved_version}."
-            )
+            if database_mode == "SILICON":
+                raise ValueError(
+                    f"Failed to load perf database for system={sys_name}, "
+                    f"backend={backend_name}, version={resolved_version}."
+                )
+            for systems_root in get_systems_paths():
+                if os.path.isfile(os.path.join(systems_root, f"{sys_name}.yaml")):
+                    db = PerfDatabase(sys_name, backend_name, resolved_version, systems_root)
+                    break
+        if db is None:
+            raise ValueError(f"Failed to load system spec for system={sys_name}. Check --systems-paths.")
         if database_mode != "SILICON":
             from aiconfigurator.sdk.common import DatabaseMode
 
+            db = copy.deepcopy(db)
             db.set_default_database_mode(DatabaseMode[database_mode])
         return db
 

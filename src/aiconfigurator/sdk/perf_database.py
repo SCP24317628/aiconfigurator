@@ -156,10 +156,9 @@ def get_latest_database_version(
     import re
 
     supported_databases = get_supported_databases()
-    try:
-        database_versions = supported_databases[system][backend]
-    except KeyError:
-        logger.exception(f"database not found for {system=}, {backend=}")
+    database_versions = supported_databases.get(system, {}).get(backend)
+    if not database_versions:
+        logger.debug("database not found for %s, %s", f"{system=}", f"{backend=}")
         return None
 
     def parse_version(version_str):
@@ -221,7 +220,7 @@ def get_latest_database_version(
             continue
 
     if not versions_ids:
-        logger.error(f"no valid versions parsed for {system=}, {backend=}")
+        logger.debug("no valid versions parsed for %s, %s", f"{system=}", f"{backend=}")
         return None
 
     # Find the latest version by comparing version tuples.

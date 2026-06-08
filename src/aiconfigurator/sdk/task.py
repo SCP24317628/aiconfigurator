@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PREFILL_LATENCY_CORRECTION_SCALE = 1.1
 DEFAULT_DECODE_LATENCY_CORRECTION_SCALE = 1.08
+ESTIMATE_DATABASE_VERSION = "estimate"
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ class TaskContext:
     total_gpus: int | None
     free_gpu_memory_fraction: float | None = None
     max_seq_len: int | None = None
+    database_mode: str | None = None
     profiles: list[str] = field(default_factory=list)
     yaml_patch: dict = field(default_factory=dict)
     yaml_mode: Literal["patch", "replace"] = "patch"
@@ -77,7 +80,12 @@ class TaskContext:
     def resolved_backend_version_for(self, system_name: str) -> str:
         if self.backend_version is not None:
             return self.backend_version
-        return get_latest_database_version(system=system_name, backend=self.backend_name)
+        if self.database_mode in {common.DatabaseMode.SOL.name, common.DatabaseMode.EMPIRICAL.name}:
+            return ESTIMATE_DATABASE_VERSION
+        latest_version = get_latest_database_version(system=system_name, backend=self.backend_name)
+        if latest_version is None and self.database_mode == common.DatabaseMode.HYBRID.name:
+            return ESTIMATE_DATABASE_VERSION
+        return latest_version
 
 
 def _deep_merge(target: dict, source: Mapping, *, allow_new: bool = True) -> dict:
@@ -747,6 +755,7 @@ class TaskConfig:
             enable_chunked_prefill=enable_chunked_prefill,
             moe_backend=moe_backend,
             total_gpus=total_gpus,
+            database_mode=database_mode,
             profiles=effective_profiles,
             yaml_patch=yaml_patch,
             yaml_mode=yaml_mode,
@@ -845,11 +854,14 @@ class TaskConfig:
 
         # Validate requested quant modes against available perf data early, to avoid
         # late interpolation/assert failures and to provide actionable guidance.
-        try:
-            database = get_database(system=self.system_name, backend=self.backend_name, version=self.backend_version)
-        except Exception:
-            # If database can't be loaded at all, let downstream handle/report it.
-            return
+        database_mode = getattr(self.config, "database_mode", None)
+        database = None
+        if database_mode is None or database_mode == common.DatabaseMode.SILICON.name:
+            try:
+                database = get_database(system=self.system_name, backend=self.backend_name, version=self.backend_version)
+            except Exception:
+                # If database can't be loaded at all, let downstream handle/report it.
+                return
 
         supported = getattr(database, "supported_quant_mode", {}) or {}
 
@@ -1098,6 +1110,15 @@ class TaskConfig:
 
 class TaskRunner:
     @staticmethod
+    def _get_system_spec_database(system: str, backend: str, version: str):
+        from aiconfigurator.sdk.perf_database import PerfDatabase, get_systems_paths
+
+        for systems_root in get_systems_paths():
+            if os.path.isfile(os.path.join(systems_root, f"{system}.yaml")):
+                return PerfDatabase(system, backend, version, systems_root)
+        return None
+
+    @staticmethod
     def _get_database(system: str, backend: str, version: str, database_mode: str | None = None):
         """Fetch a database from the global cache.
 
@@ -1105,7 +1126,17 @@ class TaskRunner:
         `set_default_database_mode` mutates state).  Otherwise the cached
         instance is returned directly.
         """
-        db = get_database(system=system, backend=backend, version=version)
+        if database_mode is not None and database_mode != common.DatabaseMode.SILICON.name:
+            if database_mode == common.DatabaseMode.HYBRID.name and version and version != ESTIMATE_DATABASE_VERSION:
+                db = get_database(system=system, backend=backend, version=version)
+            else:
+                db = None
+            if db is None:
+                db = TaskRunner._get_system_spec_database(system, backend, version or ESTIMATE_DATABASE_VERSION)
+        else:
+            db = get_database(system=system, backend=backend, version=version)
+        if db is None:
+            return None
         if database_mode is not None:
             db = copy.deepcopy(db)
             db.set_default_database_mode(common.DatabaseMode[database_mode])

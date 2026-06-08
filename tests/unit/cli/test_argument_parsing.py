@@ -89,7 +89,7 @@ class TestCLIArgumentParsing:
         expected_choices = [backend.value for backend in common.BackendName] + ["auto"]
         assert sorted(action.choices) == sorted(expected_choices)
 
-    @pytest.mark.parametrize("system_value", ["h200_sxm", "b200_sxm", "gb200"])
+    @pytest.mark.parametrize("system_value", ["h200_sxm", "b200_sxm", "gb200", "s5000"])
     def test_supported_systems_parse_successfully(self, cli_parser, system_value):
         """System flag should accept supported platforms including b200 and gb200."""
         args = cli_parser.parse_args(

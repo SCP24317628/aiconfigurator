@@ -695,14 +695,15 @@ def build_default_task_configs(
         for backend_name in backends_to_sweep:
             sys_backends = supported.get(system, {})
             decode_backends = supported.get(decode_system, {}) if decode_system != system else sys_backends
-            if backend_name not in sys_backends:
-                logger.warning("Skipping backend %s: not supported for system %s.", backend_name, system)
-                continue
-            if decode_system != system and backend_name not in decode_backends:
-                logger.warning("Skipping backend %s: not supported for decode system %s.", backend_name, decode_system)
-                continue
+            if database_mode == common.DatabaseMode.SILICON.name:
+                if backend_name not in sys_backends:
+                    logger.warning("Skipping backend %s: not supported for system %s.", backend_name, system)
+                    continue
+                if decode_system != system and backend_name not in decode_backends:
+                    logger.warning("Skipping backend %s: not supported for decode system %s.", backend_name, decode_system)
+                    continue
             if backend_version is not None:
-                if backend_version not in sys_backends.get(backend_name, []):
+                if database_mode == common.DatabaseMode.SILICON.name and backend_version not in sys_backends.get(backend_name, []):
                     logger.warning(
                         "Skipping backend %s: version %s not available for system %s.",
                         backend_name,
@@ -710,7 +711,11 @@ def build_default_task_configs(
                         system,
                     )
                     continue
-                if decode_system != system and backend_version not in decode_backends.get(backend_name, []):
+                if (
+                    database_mode == common.DatabaseMode.SILICON.name
+                    and decode_system != system
+                    and backend_version not in decode_backends.get(backend_name, [])
+                ):
                     logger.warning(
                         "Skipping backend %s: version %s not available for decode system %s.",
                         backend_name,
@@ -728,9 +733,10 @@ def build_default_task_configs(
             raise SystemExit(1)
         backends_to_sweep = available
     else:
-        _ensure_backend_version_available(system, backend, backend_version)
-        if decode_system != system:
-            _ensure_backend_version_available(decode_system, backend, backend_version)
+        if database_mode == common.DatabaseMode.SILICON.name:
+            _ensure_backend_version_available(system, backend, backend_version)
+            if decode_system != system:
+                _ensure_backend_version_available(decode_system, backend, backend_version)
 
     common_kwargs: dict[str, Any] = {
         "model_path": model_path,
@@ -929,6 +935,7 @@ def build_experiment_task_configs(
         # backend, default to trtllm
         backend_name = exp_config.get("backend_name") or common.BackendName.trtllm.value
         backend_version = exp_config.get("backend_version")
+        database_mode = exp_config.get("database_mode", common.DatabaseMode.SILICON.name)
 
         total_gpus = exp_config.get("total_gpus")
         if total_gpus is None:
@@ -944,10 +951,11 @@ def build_experiment_task_configs(
             "profiles": exp_config.get("profiles", []),
         }
 
-        if backend_version is not None:
+        if backend_version is not None and database_mode == common.DatabaseMode.SILICON.name:
             _ensure_backend_version_available(system_name, backend_name, backend_version)
             if serving_mode == "disagg" and inferred_decode_system and inferred_decode_system != system_name:
                 _ensure_backend_version_available(inferred_decode_system, backend_name, backend_version)
+        if backend_version is not None:
             task_kwargs["backend_version"] = backend_version
 
         if serving_mode == "disagg":
@@ -965,7 +973,7 @@ def build_experiment_task_configs(
         if "enable_chunked_prefill" in exp_config:
             task_kwargs["enable_chunked_prefill"] = exp_config["enable_chunked_prefill"]
         if "database_mode" in exp_config:
-            task_kwargs["database_mode"] = exp_config["database_mode"]
+            task_kwargs["database_mode"] = database_mode
 
         yaml_config = _build_yaml_config(exp_config, config_section)
         if yaml_config:

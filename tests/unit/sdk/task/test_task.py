@@ -89,6 +89,29 @@ def test_taskconfig_agg_default():
     assert cfg.applied_layers == ["base-common", "agg-defaults"]
 
 
+def test_taskconfig_sol_uses_estimate_version_without_database_lookup(monkeypatch):
+    def fail_latest_version(system, backend):
+        raise AssertionError("SOL mode should not resolve latest silicon database version")
+
+    def fail_get_database(system, backend, version):
+        raise AssertionError("SOL mode validation should not load silicon database")
+
+    monkeypatch.setattr(task_module, "get_latest_database_version", fail_latest_version)
+    monkeypatch.setattr(task_module, "get_database", fail_get_database)
+
+    task = TaskConfig(
+        serving_mode="agg",
+        model_path="Qwen/Qwen3-32B",
+        system_name="s5000",
+        backend_name="trtllm",
+        database_mode="SOL",
+    )
+
+    assert task.backend_version == task_module.ESTIMATE_DATABASE_VERSION
+    assert task.config.worker_config.backend_version == task_module.ESTIMATE_DATABASE_VERSION
+    assert task.config.database_mode == "SOL"
+
+
 def test_taskconfig_disagg_default():
     task = TaskConfig(serving_mode="disagg", model_path="Qwen/Qwen3-32B", system_name="h200_sxm")
     cfg = task.config
@@ -508,6 +531,58 @@ def test_taskrunner_runs_agg_and_disagg():
 
     assert isinstance(agg_result["pareto_df"], pd.DataFrame)
     assert isinstance(disagg_result["pareto_df"], pd.DataFrame)
+
+
+def test_taskrunner_sol_database_uses_system_yaml_without_perf_tables(tmp_path):
+    from aiconfigurator.sdk import perf_database
+
+    systems_dir = tmp_path / "systems"
+    data_dir = systems_dir / "data" / "s5000"
+    data_dir.mkdir(parents=True)
+    (systems_dir / "s5000.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "data_dir": "data/s5000",
+                "gpu": {
+                    "mem_bw": 1600000000000,
+                    "mem_bw_empirical_scaling_factor": 0.8,
+                    "mem_empirical_constant_latency": 0.000003,
+                    "mem_capacity": 82944000000,
+                    "float16_tc_flops": 447000000000000,
+                    "int8_tc_flops": 895000000000000,
+                    "fp8_tc_flops": 895000000000000,
+                    "power": 750,
+                    "sm_version": "PH",
+                },
+                "node": {
+                    "num_gpus_per_node": 8,
+                    "inter_node_bw": 25000000000,
+                    "intra_node_bw": 392000000000,
+                    "pcie_bw": 64000000000,
+                    "p2p_latency": 0.00001,
+                },
+                "misc": {
+                    "nccl_mem": {1: 0, 2: 358612992, 4: 411041792, 8: 411041792},
+                    "other_mem": 0,
+                    "nccl_version": "2.26.2",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    previous_paths = perf_database.get_systems_paths()
+    try:
+        perf_database.set_systems_paths(str(systems_dir))
+        db = TaskRunner._get_database("s5000", "trtllm", task_module.ESTIMATE_DATABASE_VERSION, "SOL")
+    finally:
+        perf_database.set_systems_paths(previous_paths)
+
+    assert db is not None
+    assert db.system == "s5000"
+    assert db.version == task_module.ESTIMATE_DATABASE_VERSION
+    assert db.get_default_database_mode().name == "SOL"
+    assert db.system_spec["gpu"]["mem_capacity"] == 82944000000
 
 
 def test_sglang_moe_configs():

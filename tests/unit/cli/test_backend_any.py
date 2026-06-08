@@ -9,6 +9,7 @@ import pytest
 
 from aiconfigurator.cli.main import build_default_task_configs
 from aiconfigurator.sdk.common import BackendName
+from aiconfigurator.sdk.task import ESTIMATE_DATABASE_VERSION
 
 pytestmark = pytest.mark.unit
 
@@ -126,3 +127,18 @@ class TestBackendAny:
             assert task_config.config.nextn == 0
             # Default accept rates should still be present
             assert task_config.config.nextn_accept_rates is not None
+
+    def test_build_default_task_configs_s5000_sol_without_database(self):
+        """S5000 SOL mode should not require a silicon database version."""
+        task_configs = build_default_task_configs(
+            model_path="Qwen/Qwen3-32B",
+            total_gpus=8,
+            system="s5000",
+            backend="trtllm",
+            database_mode="SOL",
+        )
+
+        assert set(task_configs) == {"agg", "disagg"}
+        assert task_configs["agg"].backend_version == ESTIMATE_DATABASE_VERSION
+        assert task_configs["disagg"].backend_version == ESTIMATE_DATABASE_VERSION
+        assert task_configs["agg"].config.database_mode == "SOL"

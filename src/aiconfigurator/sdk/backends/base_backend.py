@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import inspect
 import logging
 from collections import defaultdict
 from typing import ClassVar
@@ -50,7 +51,7 @@ class BaseBackend:
     # Model families whose MoE block-scale dispatch workspace is added on top of
     # the base activation budget.
     MOE_WORKSPACE_FAMILIES: ClassVar[tuple[str, ...]] = (
-        "GEMMA4MOE",
+        "GEMMA4MIX",
         "DEEPSEEK",
         "DEEPSEEKV32",
         "DEEPSEEKV4",
@@ -82,6 +83,21 @@ class BaseBackend:
         the DEEPSEEK family (legacy accounting, predates V4).
         """
         return getattr(model, "_hidden_size", h)
+
+    def _mix_step_gen_tokens(self, b: int, ctx_tokens: int, isl: int, osl: int) -> int:
+        """Return the number of decode tokens per mix step for a batch of b requests.
+
+        A mix step is a forward pass that contains both prefill tokens (for requests
+        still completing their context phase) and decode tokens (for requests already
+        generating). This method encodes the engine's scheduling policy for how many
+        decode-phase requests participate alongside the prefilling request(s).
+
+        Subclasses should override to match their engine's scheduling behaviour.
+        """
+        steps_to_finish_ctx = np.ceil(isl * b / ctx_tokens)
+        if steps_to_finish_ctx >= osl:
+            return max(1, int(b // (steps_to_finish_ctx / osl)))
+        return max(1, b - int(np.ceil(ctx_tokens / isl)))
 
     def _resolve_agg_kwargs(self, kwargs: dict, isl: int, osl: int) -> dict:
         """Resolve backend-specific run_agg kwargs to defaults.
@@ -380,7 +396,11 @@ class BaseBackend:
             enc_cfg = getattr(model, "encoder_config", None)
             num_images = runtime_config.num_images_per_request
 
-            if runtime_config.num_images_per_request > 0 and enc_cfg is not None:
+            if runtime_config.num_images_per_request <= 0 or enc_cfg is None:
+                return encoder_latency_dict, encoder_energy_wms_dict, 0
+
+            has_image_dims = runtime_config.image_height > 0 and runtime_config.image_width > 0
+            if has_image_dims:
                 img_stride = enc_cfg.patch_size * enc_cfg.spatial_merge_size
                 tokens_per_image = (runtime_config.image_height // img_stride) * (
                     runtime_config.image_width // img_stride
@@ -388,8 +408,14 @@ class BaseBackend:
                 pre_merge_per_image = (runtime_config.image_height // enc_cfg.patch_size) * (
                     runtime_config.image_width // enc_cfg.patch_size
                 )
+            elif runtime_config.num_image_tokens > 0:
+                tokens_per_image = runtime_config.num_image_tokens
+                pre_merge_per_image = tokens_per_image * (enc_cfg.spatial_merge_size**2)
             else:
-                # No image dimensions specified. skip encoder modeling
+                # No image dimensions or token override specified; model this as a text-only request.
+                return encoder_latency_dict, encoder_energy_wms_dict, 0
+
+            if tokens_per_image <= 0 or pre_merge_per_image <= 0:
                 return encoder_latency_dict, encoder_energy_wms_dict, 0
 
             n_img_post = tokens_per_image * num_images  # post-merge: injected into LLM context
@@ -615,6 +641,67 @@ class BaseBackend:
         summary.set_summary_df(summary_df)
 
         return summary
+
+    def get_default_free_gpu_memory_fraction(self) -> float | None:
+        """Default KV cache memory fraction for this backend, if it has one."""
+        return None
+
+    def get_kv_cache_memory_check_params(self) -> tuple[float, float]:
+        """Return backend-specific KV cache reserved fraction and tolerance."""
+        return 0.0, 0.0
+
+    def get_partition_memory_usage(
+        self,
+        model: BaseModel,
+        database: PerfDatabase,
+        *,
+        partition_ops,
+        batch_size: int,
+        beam_width: int,
+        isl: int,
+        osl: int,
+        num_tokens: int = 0,
+        prefix: int = 0,
+        max_seq_len: int | None = None,
+        include_kvcache: bool = True,
+        kvcache_multiplier: int = 1,
+    ) -> dict[str, float]:
+        """Get backend memory with weights replaced by a model partition.
+
+        AFD uses the same backend activation/KV/NCCL/other memory model as
+        agg/disagg, then substitutes the weights that actually live on the
+        A- or F-worker pool.
+        """
+        kwargs = {
+            "num_tokens": num_tokens,
+            "prefix": prefix,
+        }
+        if "max_seq_len" in inspect.signature(self._get_memory_usage).parameters:
+            kwargs["max_seq_len"] = max_seq_len
+
+        memory = self._get_memory_usage(
+            model,
+            database,
+            batch_size,
+            beam_width,
+            isl,
+            osl,
+            **kwargs,
+        )
+        memory = dict(memory)
+        memory["weights"] = sum(op.get_weights() for op in partition_ops) / max(model.config.pp_size, 1) / (1 << 30)
+        if include_kvcache:
+            memory["kvcache"] = memory.get("kvcache", 0.0) * max(kvcache_multiplier, 1)
+        else:
+            memory["kvcache"] = 0.0
+
+        memory.setdefault("activations", 0.0)
+        memory.setdefault("nccl", 0.0)
+        memory.setdefault("others", 0.0)
+        memory["total"] = (
+            memory["weights"] + memory["activations"] + memory["kvcache"] + memory["nccl"] + memory["others"]
+        )
+        return memory
 
     def _get_ctx_tokens_list_for_agg_sweep(
         self,
@@ -930,10 +1017,13 @@ class BaseBackend:
         num_mix_steps = num_genonly_steps = 0
         num_mix_steps_for_tpot_calc = 0  # correction for tpot calc only
         if b > 1:
+            num_mix_gen_tokens = self._mix_step_gen_tokens(b, ctx_tokens, isl, osl)
+            assert num_mix_gen_tokens >= 1, (
+                f"num_mix_gen_tokens: {num_mix_gen_tokens}, b: {b}, ctx_tokens: {ctx_tokens}, isl: {isl}"
+            )
+            num_mix_ctx_tokens = ctx_tokens
             if steps_to_finish_ctx >= osl:
                 num_mix_steps = steps_to_finish_ctx
-                num_mix_ctx_tokens = ctx_tokens
-                num_mix_gen_tokens = max(1, b // (steps_to_finish_ctx / osl))
                 num_genonly_steps = 0
                 num_genonly_tokens = 0
                 num_mix_steps_for_tpot_calc = num_mix_steps
@@ -941,11 +1031,6 @@ class BaseBackend:
                 # 3-step is an empirical correction for pipelining requests where new requests
                 # cannot be enqueued immediately after last request's exit
                 num_mix_steps = steps_to_finish_ctx
-                num_mix_ctx_tokens = ctx_tokens
-                num_mix_gen_tokens = b - np.ceil(ctx_tokens / isl)  # the error check is outside
-                assert num_mix_gen_tokens >= 1, (
-                    f"num_mix_gen_tokens: {num_mix_gen_tokens}, b: {b}, ctx_tokens: {ctx_tokens}, isl: {isl}"
-                )
                 num_genonly_steps = osl - num_mix_steps
                 num_genonly_tokens = b
                 num_mix_steps_for_tpot_calc = max(1, num_mix_steps - 3)

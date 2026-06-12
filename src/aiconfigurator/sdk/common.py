@@ -176,7 +176,7 @@ class VisionEncoderConfig:
 
 
 @dataclass(frozen=True)
-class Gemma4MoEConfig:
+class Gemma4MixConfig:
     """Config for Google Gemma 4 (gemma4_text) hybrid attention + dense-MLP-plus-MoE FFN.
 
     Every layer runs both a shared dense MLP (intermediate_size, ``Gemma4TextMLP``) and a
@@ -515,7 +515,9 @@ DefaultHFModels = {
     "nvidia/Llama-3_3-Nemotron-Super-49B-v1",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
-    "nvidia/nemotron-ultra-rl-050826",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     "nvidia/Nemotron-H-56B-Base-8K",
     # Google Gemma 4 Models
     "google/gemma-4-26B-A4B",
@@ -556,7 +558,9 @@ ModelFamily = {
     "NEMOTRONH",
     "HYBRIDMOE",
     "QWEN35",
-    "GEMMA4MOE",
+    "QWEN3VL",
+    "QWEN3VL_MOE",
+    "GEMMA4MIX",
 }
 ARCHITECTURE_TO_MODEL_FAMILY = {
     "LlamaForCausalLM": "LLAMA",
@@ -583,7 +587,7 @@ ARCHITECTURE_TO_MODEL_FAMILY = {
     "Llama4ForConditionalGeneration": "HYBRIDMOE",
     "Qwen3_5ForConditionalGeneration": "QWEN35",
     "Qwen3_5MoeForConditionalGeneration": "QWEN35",
-    "Gemma4ForConditionalGeneration": "GEMMA4MOE",
+    "Gemma4ForConditionalGeneration": "GEMMA4MIX",
 }
 
 # Multimodal architectures whose LLM config lives under a nested key (e.g. "text_config").
@@ -755,6 +759,97 @@ ColumnsDisagg = [
     "power_w",  # NEW: E2E weighted average power in watts
 ]
 
+"""
+Columns for AFD (Attention-FFN Disaggregated) inference summary dataframe
+
+AFD is orthogonal to P/D disaggregation: the same schema is used whether
+AFD is applied to the prefill phase, the decode phase, or both.
+
+Per-phase layer scalars (``t_a_layer`` / ``t_f_layer`` / ``t_a2f_layer`` /
+``t_f2a_layer`` / ``t_c_layer`` / ``t_step`` / ``balance_ratio`` /
+``comm_hidden``) appear in three forms:
+
+* ``<scalar>``                       -- un-prefixed "headline" value.
+* ``prefill_<scalar>`` / ``decode_<scalar>``  -- per-phase paired values.
+
+Filling rules:
+
+* ``phase="prefill"`` -- un-prefixed and ``prefill_*`` reflect the prefill
+  estimate; ``decode_*`` are NaN/None.
+* ``phase="decode"``  -- mirror of the above.
+* ``phase="both"``    -- ``prefill_*`` and ``decode_*`` carry the two
+  estimates; the un-prefixed scalars are NaN/None (refusing to pick a single
+  "headline" value when two phases run and may diverge).
+* AFD-with-PD combined runs always have ``phase`` set to the AFD side
+  (``"prefill"`` or ``"decode"``); the static side's scalars are NaN/None
+  in the corresponding ``prefill_*``/``decode_*`` slot to flag "this side
+  was not estimated under AFD".
+"""
+ColumnsAFD = [
+    "model",
+    "phase",
+    "isl",
+    "osl",
+    "gpus_per_node",
+    "(a)nodes",
+    "(a)tp",
+    "(a)bs",
+    "(a)micro_bs",
+    "(a)workers",
+    "(a)memory",
+    "(a)is_oom",
+    "(f)nodes",
+    "(f)tp",
+    "(f)ep",
+    "(f)workers",
+    "(f)memory",
+    "(f)is_oom",
+    "t_a_layer",
+    "t_f_layer",
+    "t_a2f_layer",
+    "t_f2a_layer",
+    "t_c_layer",
+    "t_step",
+    "balance_ratio",
+    "comm_hidden",
+    "prefill_t_a_layer",
+    "prefill_t_f_layer",
+    "prefill_t_a2f_layer",
+    "prefill_t_f2a_layer",
+    "prefill_t_c_layer",
+    "prefill_t_step",
+    "prefill_balance_ratio",
+    "prefill_comm_hidden",
+    "decode_t_a_layer",
+    "decode_t_f_layer",
+    "decode_t_a2f_layer",
+    "decode_t_f2a_layer",
+    "decode_t_c_layer",
+    "decode_t_step",
+    "decode_balance_ratio",
+    "decode_comm_hidden",
+    "ttft",
+    "tpot",
+    "request_latency",
+    "b_total",
+    "b_micro_total",
+    "tokens/s",
+    "tokens/s/gpu",
+    "tokens/s/user",
+    "seq/s",
+    "concurrency",
+    "pipeline_model",
+    "num_microbatches",
+    "combined_with_pd",
+    "boundary_on_attn",
+    "num_total_gpus",
+    "memory",
+    "backend",
+    "version",
+    "system",
+    "power_w",
+]
+
 
 class DatabaseMode(Enum):
     """
@@ -823,11 +918,18 @@ class PerfDataFilename(Enum):
     dsv4_hca_context_module = "dsv4_hca_context_module_perf.parquet"
     dsv4_csa_generation_module = "dsv4_csa_generation_module_perf.parquet"
     dsv4_hca_generation_module = "dsv4_hca_generation_module_perf.parquet"
-    # DeepSeek-V4 sparse-kernel data (kernel-level past_kv Δ correction).
-    # Indexed by ``arch -> tp -> past_kv -> isl -> bs``.
-    # topk_512 and csa_attn are modeled analytically — no CSV needed.
+    # DeepSeek-V4 sparse-op family — all share one column schema and load
+    # through ``operations.dsv4.load_dsv4_sparse_op_data``:
+    #   csa_attn / hca_attn / paged_mqa_logits : FMLA & indexer kernel latency,
+    #     keyed ``num_heads -> tp -> past_kv -> isl -> bs`` (kernel-level Δ data,
+    #     queried by ``_lookup_sparse_kernel``).
+    #   csa_topk_calib : two rows/shape (score_mode=flat|top_last); the topK
+    #     DELTA (flat-top_last) correction applied to CSA module latency.
     dsv4_paged_mqa_logits_module = "dsv4_paged_mqa_logits_module_perf.parquet"
     dsv4_hca_attn_module = "dsv4_hca_attn_module_perf.parquet"
+    dsv4_csa_attn_module = "dsv4_csa_attn_module_perf.parquet"
+    dsv4_csa_topk_calib = "dsv4_csa_topk_calib_perf.parquet"
+    dsv4_megamoe_module = "dsv4_megamoe_module_perf.parquet"
 
 
 QuantMapping = namedtuple("QuantMapping", ["memory", "compute", "name"])
@@ -865,6 +967,18 @@ class MoEQuantMode(Enum):
     w4a16_mxfp4 = QuantMapping(0.5, 1, "w4a16_mxfp4")  # native data format for gpt oss
     w4a8_mxfp4_mxfp8 = QuantMapping(0.5, 2, "w4a8_mxfp4_mxfp8")
     # mxfp4 weights, mxfp8 activations (recommended for Blackwell)
+    w4a8_mxfp4_mxfp8_trtllm = QuantMapping(0.5, 2, "w4a8_mxfp4_mxfp8_trtllm")
+    # Blackwell trtllm-gen fused MoE: MXFP4 (E2M1, block-32) weights x MXFP8 (E4M3)
+    # activations -- the kernel DeepSeek-V4-Pro actually runs in prefill on sm100
+    # (bmm_MxE4m3_MxE2m1MxE4m3 ... sm100f, flashinfer trtllm_fp4_block_scale_moe).
+    # Distinct backend from w4a8_mxfp4_mxfp8 above (flashinfer cutedsl). DSV4 MoE
+    # weights are stored MXFP4 (I8-packed E2M1 + E8M0 scales), so sglang dispatches
+    # by GPU: sm100 -> this (trtllm-gen); sm90 -> w4a16_mxfp4_cutlass below.
+    w4a16_mxfp4_cutlass = QuantMapping(0.5, 1, "w4a16_mxfp4_cutlass")
+    # Hopper (sm90) DeepSeek-V4-Pro MoE: flashinfer cutlass SM90 mixed GEMM
+    # (cutlass_fused_moe(use_w4_group_scaling=True)) -- MXFP4 weights x BF16
+    # activations (weight-only). Distinct backend from w4a16_mxfp4 above, which is
+    # GPT-OSS's triton_kernels mxfp4 path. (DSV4 Hopper silicon data pending.)
 
 
 class FMHAQuantMode(Enum):

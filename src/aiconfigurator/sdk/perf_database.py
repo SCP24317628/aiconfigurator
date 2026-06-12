@@ -65,6 +65,7 @@ def set_systems_paths(raw_paths: str | Iterable[str] | None) -> None:
             f"Invalid entries: {', '.join(invalid_paths)}"
         )
     _SYSTEMS_PATHS = resolved_paths
+    _load_system_spec_from_paths.cache_clear()
     from aiconfigurator.sdk.operations.base import clear_all_op_caches
 
     clear_all_op_caches()
@@ -72,6 +73,26 @@ def set_systems_paths(raw_paths: str | Iterable[str] | None) -> None:
 
 def get_systems_paths() -> list[str]:
     return list(_SYSTEMS_PATHS)
+
+
+@functools.cache
+def _load_system_spec_from_paths(systems_paths: tuple[str, ...], system_name: str) -> dict:
+    for systems_root in systems_paths:
+        spec_path = os.path.join(systems_root, f"{system_name}.yaml")
+        if os.path.exists(spec_path):
+            with open(spec_path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    return {}
+
+
+def load_system_spec(
+    system_name: str | None,
+    systems_paths: str | os.PathLike | Iterable[str] | None = None,
+) -> dict:
+    if not system_name:
+        return {}
+    resolved_paths = _normalize_systems_paths(systems_paths if systems_paths is not None else get_systems_paths())
+    return _load_system_spec_from_paths(tuple(resolved_paths), system_name)
 
 
 def build_no_databases_message() -> str:
@@ -708,6 +729,7 @@ from aiconfigurator.sdk.operations.dsa import (  # noqa: F401
 from aiconfigurator.sdk.operations.dsv4 import (  # noqa: F401
     _dsv4_normalize_dtype,
     load_context_dsv4_kind_module_data,
+    load_dsv4_megamoe_module_data,
     load_dsv4_sparse_kernel_data,
     load_generation_dsv4_kind_module_data,
     load_mhc_module_data,
@@ -840,6 +862,7 @@ class _LazySupportMatrix:
             "wideep_generation_moe",
             "wideep_context_mla",
             "wideep_generation_mla",
+            "dsv4_megamoe_module",
         ),
         "trtllm": (
             "gemm",
@@ -925,15 +948,7 @@ class _LazySupportMatrix:
             from aiconfigurator.sdk.operations.gemm import GEMM
 
             GEMM.load_data(db)
-            modes = _enum_key_names(getattr(db, "_gemm_data", None))
-            # ``fp8_static`` is a behavioral mode that reuses ``fp8`` GEMM perf tables.
-            if (
-                db.backend == "trtllm"
-                and common.GEMMQuantMode.fp8.name in modes
-                and common.GEMMQuantMode.fp8_static.name not in modes
-            ):
-                modes.append(common.GEMMQuantMode.fp8_static.name)
-            return modes
+            return _gemm_key_names(db)
 
         if key == "context_attention":
             from aiconfigurator.sdk.operations.attention import ContextAttention
@@ -1056,6 +1071,19 @@ class _LazySupportMatrix:
                     modes.add(kv_cache_dtype.name if hasattr(kv_cache_dtype, "name") else str(kv_cache_dtype))
             return sorted(modes)
 
+        if key == "dsv4_megamoe_module":
+            from aiconfigurator.sdk.operations.dsv4 import DeepSeekV4MegaMoEModule
+
+            DeepSeekV4MegaMoEModule.load_data(db)
+            modes: set[str] = set()
+            data = getattr(db, "_dsv4_megamoe_module_data", None) or {}
+            for phase in data:
+                for kernel_source in data[phase]:
+                    for kernel_dtype in data[phase][kernel_source]:
+                        for quant_mode in data[phase][kernel_source][kernel_dtype]:
+                            modes.add(quant_mode.name if hasattr(quant_mode, "name") else str(quant_mode))
+            return sorted(modes)
+
         # Unreachable given the _keys gate in __getitem__, but stay defensive.
         raise KeyError(key)
 
@@ -1079,6 +1107,29 @@ def _merge_key_names(*sources) -> list[str]:
     for source in sources:
         merged.update(_enum_key_names(source))
     return sorted(merged)
+
+
+def _contains_quant_mode(data, quant_mode: common.GEMMQuantMode) -> bool:
+    if not data:
+        return False
+    try:
+        return quant_mode in data
+    except PerfDataNotAvailableError:
+        return False
+
+
+def _gemm_key_names(database) -> list[str]:
+    """Return GEMM modes, deriving static FP8 from dynamic FP8 plus overheads."""
+    names = set(_enum_key_names(getattr(database, "_gemm_data", None)))
+    fp8_static_name = common.GEMMQuantMode.fp8_static.name
+    names.discard(fp8_static_name)
+    if (
+        _contains_quant_mode(getattr(database, "_gemm_data", None), common.GEMMQuantMode.fp8)
+        and _contains_quant_mode(getattr(database, "_compute_scale_data", None), common.GEMMQuantMode.fp8)
+        and _contains_quant_mode(getattr(database, "_scale_matrix_data", None), common.GEMMQuantMode.fp8)
+    ):
+        names.add(fp8_static_name)
+    return sorted(names)
 
 
 class PerfDatabase:
@@ -1218,22 +1269,39 @@ class PerfDatabase:
                         kv_modes.add(kv_mode.name if hasattr(kv_mode, "name") else str(kv_mode))
             return sorted(kv_modes)
 
+        def _dsv4_megamoe_modes(data: dict | None) -> list[str]:
+            """Collect MoE quant-mode names from DSv4 MegaMoE data.
+
+            The table is keyed ``phase -> kernel_source -> kernel_dtype -> quant_mode -> ...``.
+            """
+            if not data:
+                return []
+            modes: set[str] = set()
+            for phase in data:
+                for kernel_source in data[phase]:
+                    for kernel_dtype in data[phase][kernel_source]:
+                        for quant_mode in data[phase][kernel_source][kernel_dtype]:
+                            modes.add(quant_mode.name if hasattr(quant_mode, "name") else str(quant_mode))
+            return sorted(modes)
+
         # For sglang backend, context_mla_data and generation_mla_data have kernel_source as first
         # level
         # We need to collect quant_modes from the nested structure
         if self.backend == "sglang":
             wideep_context_mla_modes = set()
-            for kernel_source in self._wideep_context_mla_data or {}:
-                for quant_mode in (self._wideep_context_mla_data or {})[kernel_source]:
+            wideep_context_mla_data = getattr(self, "_wideep_context_mla_data", None) or {}
+            for kernel_source in wideep_context_mla_data:
+                for quant_mode in wideep_context_mla_data[kernel_source]:
                     wideep_context_mla_modes.add(quant_mode.name)
 
             wideep_generation_mla_modes = set()
-            for kernel_source in self._wideep_generation_mla_data or {}:
-                for kv_cache_dtype in (self._wideep_generation_mla_data or {})[kernel_source]:
+            wideep_generation_mla_data = getattr(self, "_wideep_generation_mla_data", None) or {}
+            for kernel_source in wideep_generation_mla_data:
+                for kv_cache_dtype in wideep_generation_mla_data[kernel_source]:
                     wideep_generation_mla_modes.add(kv_cache_dtype.name)
 
             self.supported_quant_mode = {
-                "gemm": _enum_key_names(getattr(self, "_gemm_data", None)),
+                "gemm": _gemm_key_names(self),
                 "context_attention": _enum_key_names(getattr(self, "_context_attention_data", None)),
                 "generation_attention": _enum_key_names(getattr(self, "_generation_attention_data", None)),
                 "context_mla": _merge_key_names(
@@ -1256,10 +1324,11 @@ class PerfDatabase:
                 "wideep_generation_moe": _enum_key_names(getattr(self, "_wideep_generation_moe_data", None)),
                 "wideep_context_mla": list(wideep_context_mla_modes),
                 "wideep_generation_mla": list(wideep_generation_mla_modes),
+                "dsv4_megamoe_module": _dsv4_megamoe_modes(getattr(self, "_dsv4_megamoe_module_data", None)),
             }
         elif self.backend == "trtllm":
             self.supported_quant_mode = {
-                "gemm": _enum_key_names(getattr(self, "_gemm_data", None)),
+                "gemm": _gemm_key_names(self),
                 "context_attention": _enum_key_names(getattr(self, "_context_attention_data", None)),
                 "generation_attention": _enum_key_names(getattr(self, "_generation_attention_data", None)),
                 "context_mla": _merge_key_names(
@@ -1279,13 +1348,9 @@ class PerfDatabase:
                 "nccl": _enum_key_names(getattr(self, "_nccl_data", None)),
                 "moe": _enum_key_names(getattr(self, "_moe_data", None)),
             }
-            # `fp8_static` is a behavioral mode that reuses `fp8` GEMM perf tables.
-            gemm_modes = self.supported_quant_mode.get("gemm", []) or []
-            if common.GEMMQuantMode.fp8.name in gemm_modes and common.GEMMQuantMode.fp8_static.name not in gemm_modes:
-                gemm_modes.append(common.GEMMQuantMode.fp8_static.name)
         elif self.backend == "vllm":
             self.supported_quant_mode = {
-                "gemm": _enum_key_names(getattr(self, "_gemm_data", None)),
+                "gemm": _gemm_key_names(self),
                 "context_attention": _enum_key_names(getattr(self, "_context_attention_data", None)),
                 "generation_attention": _enum_key_names(getattr(self, "_generation_attention_data", None)),
                 "context_mla": _merge_key_names(
@@ -2356,6 +2421,51 @@ class PerfDatabase:
             kvcache_quant_mode=kvcache_quant_mode,
             fmha_quant_mode=fmha_quant_mode,
             gemm_quant_mode=gemm_quant_mode,
+            database_mode=database_mode,
+        )
+
+    @functools.lru_cache(maxsize=32768)
+    def query_dsv4_megamoe_module(
+        self,
+        num_tokens: int,
+        hidden_size: int,
+        inter_size: int,
+        topk: int,
+        num_experts: int,
+        moe_tp_size: int,
+        moe_ep_size: int,
+        quant_mode: common.MoEQuantMode,
+        workload_distribution: str,
+        is_context: bool = True,
+        source_policy: str = "random",
+        pre_dispatch: str = "sglang_jit",
+        num_fused_shared_experts: int = 0,
+        kernel_source: str = "deepgemm_megamoe",
+        kernel_dtype: str = "fp8_fp4",
+        database_mode: common.DatabaseMode | None = None,
+    ) -> PerformanceResult:
+        """Delegates to ``DeepSeekV4MegaMoEModule``; see
+        ``operations.dsv4.DeepSeekV4MegaMoEModule._query_megamoe_table``.
+        """
+        from aiconfigurator.sdk.operations.dsv4 import DeepSeekV4MegaMoEModule
+
+        return DeepSeekV4MegaMoEModule._query_megamoe_table(
+            self,
+            num_tokens=num_tokens,
+            hidden_size=hidden_size,
+            inter_size=inter_size,
+            topk=topk,
+            num_experts=num_experts,
+            moe_tp_size=moe_tp_size,
+            moe_ep_size=moe_ep_size,
+            quant_mode=quant_mode,
+            workload_distribution=workload_distribution,
+            is_context=is_context,
+            source_policy=source_policy,
+            pre_dispatch=pre_dispatch,
+            num_fused_shared_experts=num_fused_shared_experts,
+            kernel_source=kernel_source,
+            kernel_dtype=kernel_dtype,
             database_mode=database_mode,
         )
 

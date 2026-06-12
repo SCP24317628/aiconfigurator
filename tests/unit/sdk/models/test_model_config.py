@@ -8,12 +8,22 @@ Tests model validation, default models, and model-specific configurations.
 """
 
 from collections import Counter
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
 
+import aiconfigurator.sdk.operations as ops
 from aiconfigurator.sdk import common, config, models
-from aiconfigurator.sdk.models import LLAMAModel, Qwen3VLModel, check_is_moe, get_model, get_model_family
+from aiconfigurator.sdk.models import (
+    LLAMAModel,
+    Qwen3VLModel,
+    Qwen3VLMoEModel,
+    check_is_moe,
+    get_model,
+    get_model_family,
+)
+from aiconfigurator.sdk.performance_result import PerformanceResult
 from aiconfigurator.sdk.task import TaskConfig
 from aiconfigurator.sdk.utils import get_model_config_from_model_path
 
@@ -42,7 +52,9 @@ class TestSupportedModels:
             "sgl-project/DeepSeek-V4-Pro-FP8",
             "zai-org/GLM-5-FP8",
             "nvidia/GLM-5-NVFP4",
-            "nvidia/nemotron-ultra-rl-050826",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
         ],
     )
     def test_specific_models_are_in_default_list(self, hf_id):
@@ -80,9 +92,14 @@ class TestSupportedModels:
             ("zai-org/GLM-5-FP8", True),
             ("nvidia/GLM-5-NVFP4", True),
             ("Qwen/Qwen3-30B-A3B", True),
+            ("Qwen/Qwen3-VL-32B-Instruct", False),
+            ("Qwen/Qwen3-VL-30B-A3B-Instruct", True),
+            ("Qwen/Qwen3-VL-235B-A22B-Instruct", True),
             # NemotronH: check hybrid_override_pattern for 'E' (MoE layers)
             ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", True),  # Has 'E' in pattern
-            ("nvidia/nemotron-ultra-rl-050826", True),  # Has 'E' in derived pattern
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16", True),  # Has 'E' in derived pattern
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8", True),  # Has 'E' in derived pattern
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4", True),  # Has 'E' in derived pattern
             ("nvidia/Nemotron-H-56B-Base-8K", False),  # No 'E' in pattern (only M, *, -)
         ],
     )
@@ -208,7 +225,9 @@ class TestHFModelSupport:
             ("nvidia/GLM-5-NVFP4", "DEEPSEEKV32"),
             ("Qwen/Qwen3-30B-A3B", "MOE"),
             ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "NEMOTRONH"),
-            ("nvidia/nemotron-ultra-rl-050826", "NEMOTRONH"),
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16", "NEMOTRONH"),
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8", "NEMOTRONH"),
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4", "NEMOTRONH"),
             ("nvidia/Nemotron-H-56B-Base-8K", "NEMOTRONH"),
         ],
     )
@@ -232,9 +251,14 @@ class TestHFModelSupport:
             ("zai-org/GLM-5-FP8", True),
             ("nvidia/GLM-5-NVFP4", True),
             ("Qwen/Qwen3-30B-A3B", True),
+            ("Qwen/Qwen3-VL-32B-Instruct", False),
+            ("Qwen/Qwen3-VL-30B-A3B-Instruct", True),
+            ("Qwen/Qwen3-VL-235B-A22B-Instruct", True),
             # NemotronH: is_moe depends on 'E' in hybrid_override_pattern
             ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", True),  # Has 'E' (MoE layers)
-            ("nvidia/nemotron-ultra-rl-050826", True),  # Has 'E' in derived pattern
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16", True),  # Has 'E' in derived pattern
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8", True),  # Has 'E' in derived pattern
+            ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4", True),  # Has 'E' in derived pattern
             ("nvidia/Nemotron-H-56B-Base-8K", False),  # No 'E' (Mamba + Attention + MLP only)
         ],
     )
@@ -243,9 +267,16 @@ class TestHFModelSupport:
         is_moe = check_is_moe(hf_id)
         assert is_moe == is_moe_expected
 
-    def test_nemotron_ultra_config_shape_and_quant(self):
-        """Test Nemotron 3 Ultra layer-block config parsing and quant defaults."""
-        hf_id = "nvidia/nemotron-ultra-rl-050826"
+    @pytest.mark.parametrize(
+        "hf_id",
+        [
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8",
+            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+        ],
+    )
+    def test_nemotron_ultra_config_shape(self, hf_id):
+        """Test Nemotron 3 Ultra layer-block config parsing."""
         model_info = get_model_config_from_model_path(hf_id)
 
         assert model_info["architecture"] == "NemotronHForCausalLM"
@@ -262,6 +293,41 @@ class TestHFModelSupport:
         assert extra.mamba_head_dim == 64
         assert extra.moe_shared_expert_intermediate_size == 10240
 
+    @pytest.mark.parametrize(
+        "hf_id,expected_gemm_quant,expected_moe_quant,expected_kvcache_quant,expected_fmha_quant",
+        [
+            (
+                "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+                common.GEMMQuantMode.bfloat16,
+                common.MoEQuantMode.bfloat16,
+                common.KVCacheQuantMode.bfloat16,
+                common.FMHAQuantMode.bfloat16,
+            ),
+            (
+                "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-FP8",
+                common.GEMMQuantMode.fp8,
+                common.MoEQuantMode.fp8,
+                common.KVCacheQuantMode.fp8,
+                common.FMHAQuantMode.fp8,
+            ),
+            (
+                "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+                common.GEMMQuantMode.nvfp4,
+                common.MoEQuantMode.nvfp4,
+                common.KVCacheQuantMode.fp8,
+                common.FMHAQuantMode.fp8,
+            ),
+        ],
+    )
+    def test_nemotron_ultra_quant_defaults(
+        self,
+        hf_id,
+        expected_gemm_quant,
+        expected_moe_quant,
+        expected_kvcache_quant,
+        expected_fmha_quant,
+    ):
+        """Test official Nemotron 3 Ultra precision-specific quant defaults."""
         model_config = config.ModelConfig(
             tp_size=8,
             pp_size=1,
@@ -272,10 +338,10 @@ class TestHFModelSupport:
         model = get_model(hf_id, model_config, backend_name="trtllm")
 
         assert model.model_family == "NEMOTRONH"
-        assert model_config.gemm_quant_mode == common.GEMMQuantMode.nvfp4
-        assert model_config.moe_quant_mode == common.MoEQuantMode.nvfp4
-        assert model_config.kvcache_quant_mode == common.KVCacheQuantMode.fp8
-        assert model_config.fmha_quant_mode == common.FMHAQuantMode.fp8
+        assert model_config.gemm_quant_mode == expected_gemm_quant
+        assert model_config.moe_quant_mode == expected_moe_quant
+        assert model_config.kvcache_quant_mode == expected_kvcache_quant
+        assert model_config.fmha_quant_mode == expected_fmha_quant
         assert sum(op._scale_factor for op in model.context_ops if op._name == "context_mamba_norm") == 48
         assert sum(op._scale_factor for op in model.context_ops if op._name == "context_moe_norm") == 48
         assert sum(op._scale_factor for op in model.context_ops if op._name == "context_attn_norm") == 12
@@ -425,6 +491,98 @@ class TestHFModelSupport:
         assert generation_act._dim_in == 2 * local_inter_size
         assert generation_act._dim_out == local_inter_size
         assert generation_down._k == local_inter_size
+
+    def test_deepseek_v4_sglang_megamoe_backend_uses_megamoe_module(self):
+        model_config = config.ModelConfig(
+            tp_size=1,
+            moe_tp_size=1,
+            moe_ep_size=8,
+            attention_dp_size=8,
+            moe_backend="megamoe",
+            workload_distribution="uniform",
+            nextn=1,
+            nextn_accept_rates=[0.85, 0.3, 0.0, 0.0, 0.0],
+        )
+        model = get_model("deepseek-ai/DeepSeek-V4-Pro", model_config, backend_name="sglang")
+
+        context_names = [op._name for op in model.context_ops]
+        assert "context_megamoe" in context_names
+        assert "context_moe_pre_dispatch" not in context_names
+        assert "context_moe_post_dispatch" not in context_names
+
+        generation_overlap = next(op for op in model.generation_ops if op._name == "generation_moe_overlap")
+        generation_names = [op._name for op in generation_overlap._group_a]
+        assert "generation_megamoe" in generation_names
+        assert "generation_moe_pre_dispatch" not in generation_names
+        generation_megamoe = next(op for op in generation_overlap._group_a if op._name == "generation_megamoe")
+        assert generation_megamoe._workload_distribution == "balanced"
+
+    def test_deepseek_v4_sglang_deepep_backend_keeps_decomposed_moe(self):
+        model_config = config.ModelConfig(
+            tp_size=1,
+            moe_tp_size=1,
+            moe_ep_size=8,
+            attention_dp_size=8,
+            moe_backend="deepep_moe",
+            nextn=1,
+            nextn_accept_rates=[0.85, 0.3, 0.0, 0.0, 0.0],
+        )
+        model = get_model("deepseek-ai/DeepSeek-V4-Pro", model_config, backend_name="sglang")
+
+        context_names = [op._name for op in model.context_ops]
+        assert "context_megamoe" not in context_names
+        assert "context_moe_pre_dispatch" in context_names
+        assert "context_moe_post_dispatch" in context_names
+
+    def test_deepseek_v4_megamoe_module_query_uses_local_rank_tokens(self):
+        class FakeDatabase:
+            system_spec: ClassVar[dict[str, dict[str, int]]] = {"gpu": {"sm_version": 100}}
+
+            def query_dsv4_megamoe_module(self, **kwargs):
+                self.kwargs = kwargs
+                return PerformanceResult(2.0, energy=3.0)
+
+        database = FakeDatabase()
+        op = ops.DeepSeekV4MegaMoEModule(
+            "test_megamoe",
+            2,
+            hidden_size=7168,
+            inter_size=3072,
+            topk=6,
+            num_experts=384,
+            moe_tp_size=1,
+            moe_ep_size=8,
+            quant_mode=common.MoEQuantMode.w4a8_mxfp4_mxfp8,
+            workload_distribution="uniform",
+        )
+
+        result = op.query(database, x=16)
+
+        assert float(result) == 4.0
+        assert result.energy == 6.0
+        assert database.kwargs["num_tokens"] == 16
+        assert database.kwargs["workload_distribution"] == "balanced"
+        assert database.kwargs["source_policy"] == "random"
+
+    def test_deepseek_v4_megamoe_module_rejects_non_blackwell_database(self):
+        class FakeDatabase:
+            system_spec: ClassVar[dict[str, dict[str, int]]] = {"gpu": {"sm_version": 90}}
+
+        op = ops.DeepSeekV4MegaMoEModule(
+            "test_megamoe",
+            1,
+            hidden_size=7168,
+            inter_size=3072,
+            topk=6,
+            num_experts=384,
+            moe_tp_size=1,
+            moe_ep_size=8,
+            quant_mode=common.MoEQuantMode.w4a8_mxfp4_mxfp8,
+            workload_distribution="power_law_1.01",
+        )
+
+        with pytest.raises(ValueError, match="Blackwell"):
+            op.query(FakeDatabase(), x=16)
 
     def test_deepseek_v32_kvcache_bytes_include_indexer_cache(self):
         model_config = config.ModelConfig(
@@ -600,6 +758,66 @@ class TestKVCacheElementsPerToken:
         )
         assert gqa_elems != model.get_kvcache_elements_per_token()
         assert model.get_kvcache_elements_per_token() == model._num_layers * (512 + 64)
+
+
+class TestGetKvcacheMaxTokens:
+    """``Model.get_kvcache_max_tokens`` -- the capacity-sizing inverse of
+    ``get_kvcache_bytes_per_sequence``.
+
+    Linear-growth models (GQA / MLA) must invert to exact floor-division by the
+    per-token size; non-linear models (DeepSeek-V4's window-capped + compressed
+    attention) must follow the true piecewise curve via the monotonic search,
+    which also fits strictly more tokens than the seq_len=1 extrapolation.
+    """
+
+    @staticmethod
+    def _build_model(hf_id: str, tp_size: int, **extra):
+        model_config = config.ModelConfig(tp_size=tp_size, pp_size=1, attention_dp_size=1, **extra)
+        return models.get_model(hf_id, model_config, backend_name="trtllm")
+
+    @pytest.mark.parametrize(
+        "hf_id,tp,moe_kw",
+        [
+            ("meta-llama/Meta-Llama-3.1-8B", 1, {}),  # GQA, linear
+            ("Qwen/Qwen3-32B", 4, {}),  # GQA, linear
+            ("deepseek-ai/DeepSeek-V3.2", 4, {"moe_tp_size": 1, "moe_ep_size": 4}),  # MLA, linear
+        ],
+    )
+    def test_linear_models_invert_to_floor_division(self, hf_id, tp, moe_kw):
+        model = self._build_model(hf_id, tp, **moe_kw)
+        per_token = model.get_kvcache_bytes_per_sequence(1)
+        for seq_len in (1, 137, 4096, 200_000):
+            budget = model.get_kvcache_bytes_per_sequence(seq_len)
+            assert model.get_kvcache_max_tokens(budget) == int(budget // per_token) == seq_len
+
+    def test_zero_or_sub_token_budget_returns_zero(self):
+        model = self._build_model("Qwen/Qwen3-32B", 4)
+        assert model.get_kvcache_max_tokens(0) == 0
+        assert model.get_kvcache_max_tokens(model.get_kvcache_bytes_per_sequence(1) - 1) == 0
+
+    def test_deepseek_v4_inverts_nonlinear_curve(self):
+        """DeepSeek-V4 caps local attention at its window and compresses past it
+        (plus fixed decode-state buffers), so its KV growth is non-linear; the
+        inverse follows that curve and beats the seq_len=1 extrapolation."""
+        model_config = config.ModelConfig(
+            tp_size=8,
+            moe_tp_size=1,
+            moe_ep_size=8,
+            attention_dp_size=1,
+            nextn=1,
+            nextn_accept_rates=[0.85, 0.3, 0.0, 0.0, 0.0],
+        )
+        model = models.get_model("sgl-project/DeepSeek-V4-Pro-FP8", model_config, backend_name="trtllm")
+        window = model.extra_params.sliding_window
+        budget = model.get_kvcache_bytes_per_sequence(window * 8)  # well past the window
+        tokens = model.get_kvcache_max_tokens(budget)
+        # Exact monotonic inverse: `tokens` fits, `tokens + 1` does not.
+        assert model.get_kvcache_bytes_per_sequence(tokens) <= budget
+        assert model.get_kvcache_bytes_per_sequence(tokens + 1) > budget
+        # The seq_len=1 slope (inflated by the fixed buffers + uncapped local KV)
+        # under-counts capacity; the curve-aware inverse fits more.
+        per_token = model.get_kvcache_bytes_per_sequence(1)
+        assert tokens > int(budget // per_token)
 
 
 class TestBackendConfiguration:
@@ -939,6 +1157,7 @@ class TestDeepSeekTPAllReduce:
 # ── Qwen3VL constants ──────────────────────────────────────────────────────────
 
 _QWEN3VL_ARCH = "Qwen3VLForConditionalGeneration"
+_QWEN3VL_MOE_ARCH = "Qwen3VLMoeForConditionalGeneration"
 _VL_MODELS = [
     "Qwen/Qwen3-VL-32B-Instruct",
     "Qwen/Qwen3-VL-32B-Thinking",
@@ -953,6 +1172,13 @@ class TestQwen3VLRegistration:
 
     def test_architecture_maps_to_qwen3vl_family(self):
         assert common.ARCHITECTURE_TO_MODEL_FAMILY[_QWEN3VL_ARCH] == "QWEN3VL"
+
+    def test_moe_architecture_maps_to_qwen3vl_moe_family(self):
+        assert common.ARCHITECTURE_TO_MODEL_FAMILY[_QWEN3VL_MOE_ARCH] == "QWEN3VL_MOE"
+
+    def test_qwen3vl_families_are_registered(self):
+        assert "QWEN3VL" in common.ModelFamily
+        assert "QWEN3VL_MOE" in common.ModelFamily
 
     def test_architecture_in_multimodal_text_config_key(self):
         assert _QWEN3VL_ARCH in common.MULTIMODAL_TEXT_CONFIG_KEY
@@ -1033,6 +1259,11 @@ class TestQwen3VLModel:
 
     def test_get_model_returns_qwen3vl_instance(self, vl_model):
         assert isinstance(vl_model, Qwen3VLModel)
+
+    def test_get_model_returns_qwen3vl_moe_instance(self):
+        model_config = config.ModelConfig(moe_tp_size=1, moe_ep_size=1)
+        model = get_model("Qwen/Qwen3-VL-30B-A3B-Instruct", model_config, "trtllm")
+        assert isinstance(model, Qwen3VLMoEModel)
 
     def test_get_model_vl_is_subclass_of_llama(self, vl_model):
         assert isinstance(vl_model, LLAMAModel)

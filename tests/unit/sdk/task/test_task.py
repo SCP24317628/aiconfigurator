@@ -32,6 +32,7 @@ if str(_SRC) not in sys.path:
 
 import aiconfigurator.sdk.task as task_module
 from aiconfigurator.sdk.errors import NoFeasibleConfigError
+from aiconfigurator.sdk.perf_database import get_systems_paths, set_systems_paths
 from aiconfigurator.sdk.task import TaskConfig, TaskRunner
 
 
@@ -81,6 +82,25 @@ def _enum_name(value):
     return value.name if hasattr(value, "name") else value
 
 
+def test_load_system_spec_uses_configured_systems_paths(tmp_path):
+    systems_a = tmp_path / "systems_a"
+    systems_b = tmp_path / "systems_b"
+    systems_a.mkdir()
+    systems_b.mkdir()
+    (systems_a / "custom_system.yaml").write_text(yaml.safe_dump({"gpu": {"sm_version": 90}}))
+    (systems_b / "custom_system.yaml").write_text(yaml.safe_dump({"gpu": {"sm_version": 100}}))
+
+    previous_paths = get_systems_paths()
+    try:
+        set_systems_paths(str(systems_a))
+        assert not task_module._is_blackwell_system("custom_system")
+
+        set_systems_paths(str(systems_b))
+        assert task_module._is_blackwell_system("custom_system")
+    finally:
+        set_systems_paths(previous_paths)
+
+
 def test_taskconfig_agg_default():
     task = TaskConfig(serving_mode="agg", model_path="Qwen/Qwen3-32B", system_name="h200_sxm")
     cfg = task.config
@@ -89,6 +109,64 @@ def test_taskconfig_agg_default():
     assert _enum_name(cfg.worker_config.gemm_quant_mode) == "bfloat16"
     assert cfg.worker_config.num_gpu_per_worker == [1, 2, 4, 8]
     assert cfg.applied_layers == ["base-common", "agg-defaults"]
+
+
+@pytest.mark.parametrize("model_path", ["zai-org/GLM-5", "sgl-project/DeepSeek-V4-Pro-FP8"])
+@pytest.mark.parametrize(
+    "backend_name,backend_version",
+    [
+        ("sglang", "0.5.10"),
+        ("trtllm", "1.3.0rc10"),
+        ("vllm", "0.19.0"),
+    ],
+)
+def test_taskconfig_large_blackwell_moe_defaults_include_pipeline_parallel_worker(
+    model_path, backend_name, backend_version
+):
+    task = TaskConfig(
+        serving_mode="agg",
+        model_path=model_path,
+        system_name="b200_sxm",
+        backend_name=backend_name,
+        backend_version=backend_version,
+        total_gpus=128,
+    )
+
+    cfg = task.config.worker_config
+    assert cfg.num_gpu_per_worker == [1, 2, 4, 8, 16]
+    assert cfg.pp_list == [1, 2]
+    assert 8 in cfg.tp_list
+    assert 1 in cfg.dp_list
+
+
+def test_taskconfig_large_blackwell_moe_disagg_defaults_include_pipeline_parallel_worker():
+    task = TaskConfig(
+        serving_mode="disagg",
+        model_path="zai-org/GLM-5",
+        system_name="b200_sxm",
+        decode_system_name="b200_sxm",
+        backend_name="sglang",
+        backend_version="0.5.10",
+        total_gpus=128,
+    )
+
+    for cfg in (task.config.prefill_worker_config, task.config.decode_worker_config):
+        assert cfg.num_gpu_per_worker == [1, 2, 4, 8, 16]
+        assert cfg.pp_list == [1, 2]
+
+
+def test_taskconfig_large_pipeline_parallel_worker_defaults_are_large_budget_only():
+    task = TaskConfig(
+        serving_mode="agg",
+        model_path="zai-org/GLM-5",
+        system_name="b200_sxm",
+        backend_name="sglang",
+        backend_version="0.5.10",
+        total_gpus=8,
+    )
+
+    assert task.config.worker_config.num_gpu_per_worker == [1, 2, 4, 8]
+    assert task.config.worker_config.pp_list == [1]
 
 
 def test_taskrunner_no_feasible_config_logs_without_traceback(monkeypatch, caplog):
@@ -172,22 +250,23 @@ def test_taskconfig_profile_application():
     assert any(layer.startswith("profile:fp8") for layer in cfg.applied_layers)
 
 
-def test_taskconfig_fp8_static_requires_trtllm_backend():
-    with pytest.raises(ValueError, match=r"fp8_static"):
-        TaskConfig(
-            serving_mode="agg",
-            model_path="Qwen/Qwen3-32B",
-            system_name="h200_sxm",
-            backend_name="sglang",
-            yaml_config={
-                "mode": "patch",
-                "config": {
-                    "worker_config": {
-                        "gemm_quant_mode": "fp8_static",
-                    }
-                },
+def test_taskconfig_fp8_static_allows_sglang_backend():
+    task = TaskConfig(
+        serving_mode="agg",
+        model_path="Qwen/Qwen3-32B",
+        system_name="h200_sxm",
+        backend_name="sglang",
+        yaml_config={
+            "mode": "patch",
+            "config": {
+                "worker_config": {
+                    "gemm_quant_mode": "fp8_static",
+                }
             },
-        )
+        },
+    )
+
+    assert _enum_name(task.config.worker_config.gemm_quant_mode) == "fp8_static"
 
 
 def test_taskconfig_total_gpus_limits_agg_workers():
@@ -528,6 +607,112 @@ def test_taskconfig_deepseek_v4_vllm_sol_is_supported():
     )
 
     assert task.config.worker_config.backend_name == "vllm"
+
+
+def test_taskconfig_sglang_deepseek_v4_megamoe_validates_megamoe_table(monkeypatch):
+    class FakeDatabase:
+        def __init__(self):
+            self.system_spec = {"gpu": {"sm_version": 100}}
+            self.supported_quant_mode = {
+                "gemm": ["fp8_block"],
+                "moe": ["bfloat16"],
+                "dsv4_megamoe_module": ["w4a8_mxfp4_mxfp8"],
+                "deepseek_v4_context_module": ["bfloat16"],
+                "deepseek_v4_generation_module": ["fp8"],
+            }
+
+    def fake_get_database(system, backend, version):
+        return FakeDatabase()
+
+    monkeypatch.setattr(task_module, "get_database", fake_get_database)
+
+    task = TaskConfig(
+        serving_mode="agg",
+        model_path="deepseek-ai/DeepSeek-V4-Pro",
+        system_name="gb200",
+        backend_name="sglang",
+        backend_version="0.5.10",
+        moe_backend="megamoe",
+        total_gpus=32,
+    )
+
+    assert task.config.moe_backend == "megamoe"
+    assert _enum_name(task.config.worker_config.moe_quant_mode) == "w4a8_mxfp4_mxfp8"
+    assert task.config.worker_config.num_gpu_per_worker == [4, 8, 16, 32]
+    assert task.config.worker_config.moe_ep_list == [4, 8, 16, 32]
+
+
+def test_taskconfig_sglang_deepseek_v4_megamoe_keeps_ep4_reachable(monkeypatch):
+    class FakeDatabase:
+        def __init__(self):
+            self.system_spec = {"gpu": {"sm_version": 100}}
+            self.supported_quant_mode = {
+                "gemm": ["fp8_block"],
+                "moe": ["bfloat16"],
+                "dsv4_megamoe_module": ["w4a8_mxfp4_mxfp8"],
+                "deepseek_v4_context_module": ["bfloat16"],
+                "deepseek_v4_generation_module": ["fp8"],
+            }
+
+    def fake_get_database(system, backend, version):
+        return FakeDatabase()
+
+    monkeypatch.setattr(task_module, "get_database", fake_get_database)
+
+    task = TaskConfig(
+        serving_mode="agg",
+        model_path="deepseek-ai/DeepSeek-V4-Pro",
+        system_name="gb200",
+        backend_name="sglang",
+        backend_version="0.5.10",
+        moe_backend="megamoe",
+        total_gpus=4,
+    )
+
+    assert task.config.worker_config.num_gpu_per_worker == [4]
+    assert task.config.worker_config.moe_ep_list == [4, 8, 16, 32]
+
+
+def test_taskconfig_sglang_deepseek_v4_megamoe_requires_megamoe_table(monkeypatch):
+    class FakeDatabase:
+        def __init__(self):
+            self.system_spec = {"gpu": {"sm_version": 100}}
+            self.supported_quant_mode = {
+                "gemm": ["fp8_block"],
+                "moe": ["bfloat16"],
+                "dsv4_megamoe_module": [],
+                "deepseek_v4_context_module": ["bfloat16"],
+                "deepseek_v4_generation_module": ["fp8"],
+            }
+
+    def fake_get_database(system, backend, version):
+        return FakeDatabase()
+
+    monkeypatch.setattr(task_module, "get_database", fake_get_database)
+
+    with pytest.raises(ValueError, match="dsv4_megamoe_module performance data"):
+        TaskConfig(
+            serving_mode="agg",
+            model_path="deepseek-ai/DeepSeek-V4-Pro",
+            system_name="gb200",
+            backend_name="sglang",
+            backend_version="0.5.10",
+            moe_backend="megamoe",
+            total_gpus=32,
+        )
+
+
+def test_taskconfig_rejects_flash_megamoe_until_rows_are_packaged():
+    with pytest.raises(ValueError, match=r"packaged performance data only for DeepSeek-V4-Pro"):
+        TaskConfig(
+            serving_mode="agg",
+            model_path="deepseek-ai/DeepSeek-V4-Flash",
+            system_name="gb200",
+            backend_name="sglang",
+            backend_version="0.5.10",
+            moe_backend="megamoe",
+            total_gpus=8,
+        )
 
 
 def test_taskconfig_quant_merge_uses_model_info_when_missing(monkeypatch):
@@ -1118,6 +1303,39 @@ class TestTaskrunnerDisaggMixedWideepModelConfig:
         assert prefill_mc.enable_eplb is True
         assert decode_mc.enable_wideep is False
         assert decode_mc.enable_eplb is False
+
+    def test_top_level_workload_distribution_reaches_prefill_and_decode(self, monkeypatch):
+        captured = {}
+        pa_stub = sys.modules["aiconfigurator.sdk.pareto_analysis"]
+        monkeypatch.setattr(pa_stub, "disagg_pareto", _make_capturing_disagg_pareto(captured))
+
+        task = TaskConfig(
+            serving_mode="disagg",
+            model_path="Qwen/Qwen3-32B",
+            system_name="h200_sxm",
+            backend_name="sglang",
+            total_gpus=8,
+            yaml_config={
+                "mode": "patch",
+                "config": {
+                    "workload_distribution": "balanced",
+                    "prefill_worker_config": {
+                        "num_gpu_per_worker": [1],
+                        "tp_list": [1],
+                        "pp_list": [1],
+                    },
+                    "decode_worker_config": {
+                        "num_gpu_per_worker": [1],
+                        "tp_list": [1],
+                        "pp_list": [1],
+                    },
+                },
+            },
+        )
+        TaskRunner().run(task)
+
+        assert captured["prefill_model_config"].workload_distribution == "balanced"
+        assert captured["decode_model_config"].workload_distribution == "balanced"
 
 
 class TestRateMatchingFactorsForwarding:

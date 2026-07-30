@@ -93,6 +93,18 @@ def task_config_to_generator_config(
 
     overrides = copy.deepcopy(generator_overrides or {})
 
+    # Encoder parallelism is deployment-relevant only when the task models an
+    # image workload (same gate as the BenchConfig seeding below); text-only
+    # tasks must not grow multimodal engine flags.
+    _num_images = getattr(task_config, "num_images_per_request", None)
+    encoder_dp: bool | None = None
+    if (
+        (getattr(task_config, "image_height", 0) or 0) > 0
+        and (getattr(task_config, "image_width", 0) or 0) > 0
+        and (_num_images is None or _num_images > 0)
+    ):
+        encoder_dp = bool(getattr(task_config, "enable_encoder_dp", True))
+
     def _build_worker_params(prefix: str, extra_overrides: dict | None) -> tuple[dict, int]:
         workers = _safe_int(_series_val(result_df, f"{prefix}workers", 1), 1)
         tp = _safe_int(_series_val(result_df, f"{prefix}tp", 1), 1)
@@ -126,6 +138,8 @@ def task_config_to_generator_config(
             worker_payload["memory"] = memory
         if quant.get("kvcache_quant_mode"):
             worker_payload["kv_cache_dtype"] = quant["kvcache_quant_mode"]
+        if encoder_dp is not None:
+            worker_payload["enable_encoder_dp"] = encoder_dp
 
         worker_payload = _deep_merge(worker_payload, extra_overrides)
         return worker_payload, max(workers, 1)
@@ -160,7 +174,7 @@ def task_config_to_generator_config(
         "prefix": prefix_tokens,
         "is_moe": task_config.is_moe,
         "nextn": task_config.nextn,
-        "nextn_accept_rates": task_config.nextn_accept_rates if task_config.nextn else None,
+        "nextn_accepted": task_config.nextn_accepted if task_config.nextn else None,
     }
     model_cfg = {k: v for k, v in model_cfg.items() if v is not None}
     model_cfg = _deep_merge(model_cfg, overrides.get("ModelConfig"))
@@ -188,14 +202,18 @@ def task_config_to_generator_config(
     worker_overrides = overrides.get("Workers", {})
     worker_count_overrides = overrides.get("WorkerCounts") or overrides.get("WorkerConfig") or {}
 
+    # Recommend mode sets total_gpus to the escalation budget, not the actual
+    # recommendation.  Prefer the per-row total_gpus_needed when present.
+    effective_total_gpus = _safe_int(_series_val(result_df, "total_gpus_needed", None), None) or task_config.total_gpus
+
     if task_config.serving_mode == "agg":
         agg_params, agg_workers = _build_worker_params("", worker_overrides.get("agg"))
-        if task_config.total_gpus:
+        if effective_total_gpus:
             tp = agg_params.get("tensor_parallel_size", 1)
             pp = agg_params.get("pipeline_parallel_size", 1)
             dp = agg_params.get("data_parallel_size", 1)
             gpus_per_replica = tp * pp * dp
-            agg_workers = task_config.total_gpus // gpus_per_replica
+            agg_workers = effective_total_gpus // gpus_per_replica
         prefill_params, prefill_workers = None, 0
         decode_params, decode_workers = None, 0
     else:
@@ -203,8 +221,8 @@ def task_config_to_generator_config(
         prefill_params, prefill_workers = _build_worker_params("(p)", worker_overrides.get("prefill"))
         decode_params, decode_workers = _build_worker_params("(d)", worker_overrides.get("decode"))
 
-        # Scale disagg workers based on total_gpus (similar to agg mode)
-        if task_config.total_gpus and prefill_params and decode_params:
+        # Scale disagg workers based on total GPU count (similar to agg mode)
+        if effective_total_gpus and prefill_params and decode_params:
             p_tp = prefill_params.get("tensor_parallel_size", 1)
             p_pp = prefill_params.get("pipeline_parallel_size", 1)
             p_dp = prefill_params.get("data_parallel_size", 1)
@@ -219,7 +237,7 @@ def task_config_to_generator_config(
             # For simplicity, assume 1:1 prefill:decode ratio per replica
             gpus_per_replica = (prefill_workers * prefill_gpus_per_worker) + (decode_workers * decode_gpus_per_worker)
             if gpus_per_replica > 0:
-                replicas = task_config.total_gpus // gpus_per_replica
+                replicas = effective_total_gpus // gpus_per_replica
                 prefill_workers = replicas * prefill_workers
                 decode_workers = replicas * decode_workers
 
@@ -230,6 +248,21 @@ def task_config_to_generator_config(
     if decode_params:
         decode_workers = _safe_int(worker_count_overrides.get("decode_workers"), decode_workers)
 
+    # Multimodal EPD: the encode worker is not produced by the SDK sweep (the
+    # encoder is modeled colocated with prefill). Inject it from explicit
+    # overrides -- --generator-set Workers.encode.* + WorkerConfig.encode_workers.
+    # Absent -> no encode worker, output unchanged.
+    encode_override = worker_overrides.get("encode")
+    encode_params = None
+    encode_workers = 0
+    if isinstance(encode_override, dict) and encode_override:
+        encode_params = dict(encode_override)
+        e_tp = _safe_int(encode_params.get("tensor_parallel_size"), 1)
+        e_pp = _safe_int(encode_params.get("pipeline_parallel_size"), 1)
+        e_dp = _safe_int(encode_params.get("data_parallel_size"), 1)
+        encode_params.setdefault("gpus_per_worker", e_tp * e_pp * e_dp)
+        encode_workers = _safe_int(worker_count_overrides.get("encode_workers"), 1)
+
     sla_cfg = {
         "isl": task_config.isl,
         "osl": task_config.osl,
@@ -237,7 +270,27 @@ def task_config_to_generator_config(
         "tpot": _safe_float(_series_val(result_df, "tpot", task_config.tpot), task_config.tpot),
     }
     sla_cfg = _deep_merge(sla_cfg, overrides.get("SlaConfig"))
-    bench_cfg = overrides.get("BenchConfig")
+
+    # Seed BenchConfig from the Task's multimodal image workload so image args
+    # reach bench_run.sh / k8s_bench.yaml. Without this, image_batch_size falls
+    # back to the schema default 0 and the templates emit a text-only benchmark
+    # even for image workloads. Explicit BenchConfig overrides win via merge.
+    image_height = getattr(task_config, "image_height", 0) or 0
+    image_width = getattr(task_config, "image_width", 0) or 0
+    # Default only a missing/None image count to 1. A deliberate
+    # num_images_per_request=0 ("disable the image encoder", used with 448x448
+    # dimensions by the web UI) must survive so the templates omit image args.
+    image_batch_size = getattr(task_config, "num_images_per_request", None)
+    if image_batch_size is None:
+        image_batch_size = 1
+    bench_cfg: dict[str, Any] = {}
+    if image_height > 0 and image_width > 0:
+        bench_cfg = {
+            "image_batch_size": image_batch_size,
+            "image_width_mean": image_width,
+            "image_height_mean": image_height,
+        }
+    bench_cfg = _deep_merge(bench_cfg, overrides.get("BenchConfig"))
 
     params = collect_generator_params(
         service=service_cfg,
@@ -255,13 +308,64 @@ def task_config_to_generator_config(
         dyn_config=dyn_cfg,
         backend=backend_name,
         generator_dynamo_version=generator_dynamo_version,
+        encode_params=encode_params,
+        encode_workers=encode_workers if encode_params else None,
     )
 
     params = _deep_merge(params, overrides.get("Params"))
-    # Expose SDK's system identifier to templates via NodeConfig.system_name
-    params.setdefault("NodeConfig", {})["system_name"] = task_config.system_name
+    # Expose SDK's system identifier to templates via NodeConfig.system_name.
+    # Use primary_system_name: for disagg, the shared top-level system_name is
+    # empty (phase-specific prefill/decode systems carry the value), so reading
+    # system_name here would blank NodeConfig and drop all hardware facts.
+    #
+    # NodeConfig.system_name (and the hardware facts derived from it) is global,
+    # while disagg prefill/decode can request different systems. Heterogeneous
+    # placement is out of scope here, so fail fast rather than silently applying
+    # the prefill system's node selectors/env to both workers.
+    system_name = task_config.primary_system_name
+    if task_config.serving_mode == "disagg":
+        prefill_system = getattr(task_config, "prefill_system_name", system_name)
+        decode_system = getattr(task_config, "decode_system_name", system_name)
+        if prefill_system != decode_system:
+            raise ValueError(
+                "Generator artifacts currently require matching prefill/decode systems; "
+                f"got prefill={prefill_system!r}, decode={decode_system!r}"
+            )
+    params.setdefault("NodeConfig", {})["system_name"] = system_name
     rule_name = overrides.get("rule")
     if rule_name:
         params["rule"] = rule_name
+    if "preserve_engine_limits" in overrides:
+        params["preserve_engine_limits"] = bool(overrides["preserve_engine_limits"])
     params["ModelConfig"] = model_cfg
+    # Preserve LlmdConfig overrides (e.g. vllm_image, kustomize_base_path) so the
+    # llm-d artifacts honor them. The bridge handles the other config sections
+    # explicitly but omitted this one, so the llm-d templates fell back to their
+    # defaults. Matches the naive generator's behavior.
+    llmd_config = copy.deepcopy(overrides.get("LlmdConfig") or {})
+    if llmd_config:
+        params["LlmdConfig"] = llmd_config
     return params
+
+
+def task_config_to_request(
+    task_config: Task,
+    result_df: pd.Series,
+    generator_overrides: dict | None = None,
+    num_gpus_per_node: int | None = None,
+):
+    """Convert a task config/result row into a typed ``GeneratorRequest``.
+
+    Built on top of :func:`task_config_to_generator_config` so it stays
+    byte-equivalent with the legacy dict path (proven by the request round-trip
+    gate). The dict-returning function above is kept unchanged for the dynamo
+    profiler and existing callers; this is the typed alternative used when a
+    caller wants to go through ``api.generate_from_request``.
+    """
+    from .request import from_legacy_params
+
+    params = task_config_to_generator_config(task_config, result_df, generator_overrides, num_gpus_per_node)
+    # Task exposes the backend via primary_backend_name (matching the dict bridge);
+    # fall back to backend_name for duck-typed/legacy callers.
+    backend = getattr(task_config, "primary_backend_name", None) or getattr(task_config, "backend_name", None)
+    return from_legacy_params(params, backend=backend)

@@ -38,8 +38,10 @@ from typing import Any, Literal
 from aiconfigurator.sdk import common, config
 from aiconfigurator.sdk.models import (
     _infer_quant_modes_from_raw_config,
+    attention_op_keys,
     check_is_moe,
     get_model_family,
+    resolve_dsv4_moe_arch_mode,
 )
 from aiconfigurator.sdk.perf_database import (
     get_latest_database_version,
@@ -47,19 +49,32 @@ from aiconfigurator.sdk.perf_database import (
     is_hopper_system,
     load_system_spec,
 )
+from aiconfigurator.sdk.speculative import (
+    SpeculativeDecodingProfile,
+    normalize_speculative_decoding,
+)
 from aiconfigurator.sdk.utils import enumerate_parallel_config, get_model_config_from_model_path
 
 logger = logging.getLogger(__name__)
 
-ParallelChoice = tuple[int, int, int, int, int]  # (tp, pp, dp, moe_tp, moe_ep)
+ParallelChoice = tuple[int, int, int, int, int, int]  # (tp, pp, dp, moe_tp, moe_ep, cp)
 
 
-_DEFAULT_NEXTN_ACCEPT_RATES: list[float] = [0.85, 0.8, 0.6, 0.0, 0.0]
+def _default_cp_list_for(model_family: str, backend_name: str) -> list[int]:
+    """Default prefill/agg ``cp_list`` for the CP auto-sweep; ``[1]`` otherwise.
 
-# Families that natively ship MTP (nextn=1) -- used only as a fallback when the
-# checkpoint's HF config does NOT declare ``num_nextn_predict_layers`` at all.
-# A config that explicitly states the field (including 0, e.g. Kimi-K2.5) wins.
-_MTP_DEFAULT_FAMILIES = {"DEEPSEEK", "DEEPSEEKV32", "DEEPSEEKV4", "KIMIK25", "QWEN35"}
+    Capability-derived: any model whose class declares ``supports_cp`` on this
+    backend is auto-swept over cp ∈ {1,2,4,8}. Keying off the registry (not a
+    hardcoded family list) means the sweep policy never drifts from
+    ``BaseModel.supports_cp``. Decode is always forced to cp=1 by iter_parallel.
+    """
+    from aiconfigurator.sdk.models.base import _MODEL_REGISTRY
+
+    cls = _MODEL_REGISTRY.get(model_family)
+    if cls is not None and cls.supports_cp(backend_name):
+        return [1, 2, 4, 8]
+    return [1]
+
 
 # Legacy V1 TaskRunner swept TPOT over this fixed grid to build the latency/throughput
 # Pareto frontier. Used when ``pareto_sweep=True`` (the default) so v2 matches v1.
@@ -317,6 +332,8 @@ class Task:
     image_height: int = 0
     image_width: int = 0
     num_images_per_request: int = 1
+    # Vision encoder data parallelism (ModelConfig default).
+    enable_encoder_dp: bool = True
     ttft: float = 1000.0
     tpot: float = 50.0
     # When True (default), sweep TPOT over the legacy grid to build the full Pareto
@@ -326,6 +343,10 @@ class Task:
     request_latency: float | None = None
     total_gpus: int | None = None
     database_mode: str | None = None
+    # Fine-grained HYBRID/EMPIRICAL transfer control: which empirical transfer kinds are
+    # permitted (see common.TransferKind). None = all (default). Accepts a preset name
+    # ("conservative"/"balanced"/"aggressive"/"off"), a kind ("xshape"), or a list thereof.
+    transfer_policy: str | list | None = None
     free_gpu_memory_fraction: float | None = None
     max_seq_len: int | None = None
     engine_step_backend: str | None = None
@@ -338,8 +359,15 @@ class Task:
     enable_wideep: bool = False
     enable_chunked_prefill: bool = False
     enable_eplb: bool = False
-    nextn: int | None = None
-    nextn_accept_rates: list[float] = field(default_factory=lambda: list(_DEFAULT_NEXTN_ACCEPT_RATES))
+    # MTP speculative decoding is OFF unless explicitly requested: nextn is the
+    # draft length (compute cost), nextn_accepted the average accepted draft tokens
+    # per step (generation benefit, 0 <= nextn_accepted <= nextn). nextn_accepted is
+    # required when nextn > 0 -- there is no built-in acceptance assumption.
+    # nextn="auto" resolves the draft depth from the checkpoint's
+    # num_nextn_predict_layers (absent/0 -> disabled); the acceptance value is
+    # still never inferred.
+    nextn: int | str = 0
+    nextn_accepted: float | None = None
     moe_backend: str | None = None
     attention_backend: str | None = None  # 'flashinfer' (default) or 'fa3'; only consumed by MLA models
     wideep_num_slots: int | None = None  # EPLB slot count; defaults to num_experts when None
@@ -356,6 +384,7 @@ class Task:
     agg_dp_candidates: list[int] | None = None
     agg_moe_tp_candidates: list[int] | None = None
     agg_moe_ep_candidates: list[int] | None = None
+    agg_cp_candidates: list[int] | None = None
 
     # ====== 4. Disagg prefill worker spec ======
     prefill_model_path: str = ""
@@ -378,6 +407,7 @@ class Task:
     prefill_dp_candidates: list[int] | None = None
     prefill_moe_tp_candidates: list[int] | None = None
     prefill_moe_ep_candidates: list[int] | None = None
+    prefill_cp_candidates: list[int] | None = None
 
     # ====== 6. Disagg decode worker spec ======
     decode_model_path: str = ""
@@ -399,6 +429,7 @@ class Task:
     decode_dp_candidates: list[int] | None = None
     decode_moe_tp_candidates: list[int] | None = None
     decode_moe_ep_candidates: list[int] | None = None
+    decode_cp_candidates: list[int] | None = None
 
     # ====== 8. Disagg orchestration ======
     num_gpu_per_replica: list[int] | None = None
@@ -530,8 +561,17 @@ class Task:
 
     def __post_init__(self) -> None:
         self._check_prefix_discipline()
+        # Validate the MTP pair BEFORE model-identity resolution: the latter is
+        # skipped when no primary model path is set, and the check must not
+        # depend on it (non-negative integer nextn; finite acceptance in range).
+        # nextn="auto" is the one exception: its depth comes from the checkpoint,
+        # so it is resolved and validated in _resolve_model_identity.
+        if self.nextn != "auto":
+            self.nextn, self.nextn_accepted = normalize_speculative_decoding(self.nextn, self.nextn_accepted)
         self._validate_deepseek_v4_hardware()
         self._resolve_model_identity()
+        if self.nextn == "auto":
+            raise ValueError("nextn='auto' requires a model path to resolve num_nextn_predict_layers.")
         self._resolve_backend_version()
         self._normalize_wideep_moe_backend()
         self._resolve_quant_modes()
@@ -632,24 +672,47 @@ class Task:
 
         text_key = common.MULTIMODAL_TEXT_CONFIG_KEY.get(self._architecture)
         cfg = self._raw_config[text_key] if text_key and text_key in self._raw_config else self._raw_config
-        # ``None`` distinguishes "field absent" from an explicit 0 (e.g. Kimi-K2.5).
+        # MTP is never enabled implicitly: nextn defaults to 0 and must be set
+        # explicitly. Surface a hint when the checkpoint ships MTP layers.
         hf_nextn = cfg.get("num_nextn_predict_layers")
-        if self.nextn is not None:
-            # User-supplied value wins. Warn when it diverges from the checkpoint --
-            # nextn can stack extra MTP layers beyond what the checkpoint ships, so
-            # an override is a deliberate choice worth surfacing.
+        if self.nextn == "auto":
+            # "auto" trusts the checkpoint for the draft DEPTH only; the
+            # acceptance value is a workload measurement and is never inferred.
+            resolved = int(hf_nextn or 0)
+            if resolved > 0:
+                try:
+                    resolved, self.nextn_accepted = normalize_speculative_decoding(resolved, self.nextn_accepted)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"nextn='auto' resolved to nextn={resolved} from the checkpoint's "
+                        f"num_nextn_predict_layers: {exc}"
+                    ) from exc
+                logger.info(
+                    "nextn='auto': modeling MTP with nextn=%d from the checkpoint's num_nextn_predict_layers.",
+                    resolved,
+                )
+            else:
+                logger.info(
+                    "nextn='auto': checkpoint ships no MTP layers (num_nextn_predict_layers absent or 0); "
+                    "modeling WITHOUT speculative decoding."
+                )
+            self.nextn = resolved
+        if self.nextn > 0:
+            # Range/required-ness already validated in __post_init__ (validate_nextn).
             if hf_nextn is not None and self.nextn != hf_nextn:
                 logger.warning(
-                    "nextn=%d overrides the checkpoint's num_nextn_predict_layers=%d (stacking additional MTP layers).",
+                    "nextn=%d differs from the checkpoint's num_nextn_predict_layers=%d "
+                    "(the single MTP module is reused for extra draft steps).",
                     self.nextn,
                     hf_nextn,
                 )
-        elif hf_nextn is not None:
-            # Checkpoint declares it explicitly (including 0) -- respect it.
-            self.nextn = hf_nextn
-        else:
-            # Field absent -> fall back to family-based default inference.
-            self.nextn = 1 if self._model_family in _MTP_DEFAULT_FAMILIES else 0
+        elif hf_nextn:
+            logger.info(
+                "Checkpoint ships MTP (num_nextn_predict_layers=%d) but nextn is not set; "
+                "modeling WITHOUT speculative decoding. Pass nextn (or nextn='auto') and "
+                "nextn_accepted to model it.",
+                hf_nextn,
+            )
 
     def _resolve_backend_version(self) -> None:
         def _resolve(system: str, backend: str, current: str | None) -> str | None:
@@ -693,8 +756,8 @@ class Task:
                 self._set_role_attr(role, "moe_quant_mode", common.MoEQuantMode.w4a8_mxfp4_mxfp8)
 
         # Track whether fmha came from an explicit field (vs HF/fallback): the
-        # V3/Kimi context downgrade must NOT fire on an EXPLICIT fp8 -- v1 keeps it
-        # (its `not explicit_fmha_mode` guard) and lets validate fail fast.
+        # data-driven fallback below must NOT fire on an EXPLICIT fp8 -- explicit
+        # values are the user's contract and validate fails fast on them.
         fmha_explicit: dict[str, bool] = {}
         for role in roles:
             for key in _QUANT_ENUM_TABLES:
@@ -702,20 +765,19 @@ class Task:
                 from_hf = base.get(key)
                 if key == "fmha_quant_mode":
                     fmha_explicit[role] = explicit is not None
-                # DeepSeek-V4-Pro on sglang uses arch-specific MoE kernels. This acts at
-                # the HF-base layer so an explicit field still overrides it. Skip megamoe,
-                # which keys its own quant table. Mirrors legacy V1 dsv4pro-moe-arch.
-                if (
-                    key == "moe_quant_mode"
-                    and self._role_attr(role, "backend_name") == "sglang"
-                    and self._role_attr(role, "model_path") == "deepseek-ai/DeepSeek-V4-Pro"
-                    and self.moe_backend != "megamoe"
-                ):
-                    sysn = self._role_attr(role, "system_name")
-                    if is_blackwell_system(sysn):
-                        from_hf = common.MoEQuantMode.w4a8_mxfp4_mxfp8_trtllm
-                    elif is_hopper_system(sysn):
-                        from_hf = common.MoEQuantMode.w4a16_mxfp4_cutlass
+                # Native DeepSeek-V4 on sglang uses arch-specific MoE kernels; the
+                # shared helper (also called on the cli estimate path) returns the
+                # dedicated perf-DB quant mode. Acts at the HF-base layer so an
+                # explicit field still overrides it.
+                if key == "moe_quant_mode":
+                    arch_mode = resolve_dsv4_moe_arch_mode(
+                        self._role_attr(role, "model_path"),
+                        self._role_attr(role, "system_name"),
+                        self._role_attr(role, "backend_name"),
+                        self.moe_backend,
+                    )
+                    if arch_mode is not None:
+                        from_hf = arch_mode
                 fallback = _QUANT_FALLBACKS[key]
 
                 if explicit is not None:
@@ -723,38 +785,121 @@ class Task:
                 resolved = from_hf if from_hf is not None else fallback
                 self._set_role_attr(role, key, resolved)
 
-        # Backend / architecture FMHA fp8->bf16 fixups (mirror v1: the V3/Kimi rule
-        # lives in validate_context => context-only; the V3.2/GLM-DSA, V4 and vLLM
-        # rules live in _apply_model_quant_defaults => every role incl. decode).
+        # Data-driven FMHA resolution: if an inferred fp8 has no fp8 slice in
+        # the role's fmha-keyed context-attention table, fall back to bfloat16
+        # with a warning instead of failing validate later.  bf16-as-fp8 is
+        # conservative: same kv-cache dtype, attention math modeled at bf16
+        # throughput.  The data IS the capability statement -- there are no
+        # per-model downgrade rules; when fp8 slices land for a combo (e.g.
+        # DSA on Blackwell vLLM), the inference survives and uses them.
+        # Explicit user fp8 is never overridden -- validate stays fail-fast
+        # for it (including v1 profile-derived values).  Systems with no
+        # packaged data keep the checkpoint inference untouched.
+        #
+        # Context-using roles only: NO generation table keys on fmha (decode
+        # compute dtype follows the kv-cache dtype; the generation MLA module
+        # loader drops the degenerate mla_dtype column), so an fp8 label is
+        # inert on decode -- and validate likewise checks fmha only for
+        # context-using roles.
         for role in roles:
-            backend_name = self._role_attr(role, "backend_name")
-            fmha = self._role_attr(role, "fmha_quant_mode")
-            # DeepSeek-V3/Kimi context attention (MLA prefill) does not support fp8 FMHA,
-            # so downgrade to bfloat16 -- but ONLY for context-attention roles (agg, prefill).
-            # The decode role uses generation attention, which keeps fp8.
-            if (
-                role != "decode"
-                and not fmha_explicit.get(role, False)
-                and self._architecture in ("DeepseekV3ForCausalLM", "KimiK25ForConditionalGeneration")
-                and fmha == common.FMHAQuantMode.fp8
-            ):
-                self._set_role_attr(role, "fmha_quant_mode", common.FMHAQuantMode.bfloat16)
-            # DSA module (DeepSeek-V3.2 / GLM-5): DSA perf tables only carry bf16 FMHA.
-            if (
-                self._architecture in ("DeepseekV32ForCausalLM", "GlmMoeDsaForCausalLM")
-                and backend_name in ("trtllm", "sglang")
-                and self._role_attr(role, "fmha_quant_mode") == common.FMHAQuantMode.fp8
-            ):
-                self._set_role_attr(role, "fmha_quant_mode", common.FMHAQuantMode.bfloat16)
-            # DeepSeek-V4 compressed attention is recorded as bf16 in the perf tables.
-            if (
-                self._architecture == "DeepseekV4ForCausalLM"
-                and self._role_attr(role, "fmha_quant_mode") == common.FMHAQuantMode.fp8
-            ):
-                self._set_role_attr(role, "fmha_quant_mode", common.FMHAQuantMode.bfloat16)
-            # vLLM perf tables only include bf16 FMHA.
-            if backend_name == "vllm" and self._role_attr(role, "fmha_quant_mode") == common.FMHAQuantMode.fp8:
-                self._set_role_attr(role, "fmha_quant_mode", common.FMHAQuantMode.bfloat16)
+            if role == "decode":
+                continue
+            if fmha_explicit.get(role, False):
+                continue
+            if self._role_attr(role, "fmha_quant_mode") != common.FMHAQuantMode.fp8:
+                continue
+            supported = self._context_fmha_supported_modes(role)
+            if not supported or common.FMHAQuantMode.fp8.name in supported:
+                continue  # fp8 data present, or no DB to consult -> keep fp8
+            if common.FMHAQuantMode.bfloat16.name not in supported:
+                continue  # no bf16 slice either -> let validate report the gap
+            self._set_role_attr(role, "fmha_quant_mode", common.FMHAQuantMode.bfloat16)
+            ctx_op, _ = self._attention_op_keys(role)
+            field = "fmha_quant_mode" if self.serving_mode == "agg" else f"{role}_fmha_quant_mode"
+            logger.warning(
+                f"{role} fmha_quant_mode=fp8 (inferred from the model checkpoint) has no "
+                f"{ctx_op!r} perf data for system={self._role_attr(role, 'system_name')!r}, "
+                f"backend={self._role_attr(role, 'backend_name')!r}, "
+                f"version={self._role_attr(role, 'backend_version')!r}; falling back to bfloat16 "
+                f"FMHA data. Predictions are conservative if the deployed engine runs fp8 FMHA; "
+                f"set {field} explicitly to override."
+            )
+
+    def _attention_op_keys(self, role: str) -> tuple[str, str]:
+        """(context_op, generation_op) support-matrix keys for this role's model
+        family / backend / wideep combination (shared by the resolve-time FMHA
+        fallback and ``_check_role_against_db``; mapping lives in
+        ``models.attention_op_keys``)."""
+        return attention_op_keys(
+            self._model_family,
+            self._role_attr(role, "backend_name"),
+            bool(self._role_attr(role, "enable_wideep")),
+        )
+
+    def _try_load_role_database(self, role: str):
+        """Load the role's perf DB, returning None when the perf data is
+        unavailable (missing system/backend/version data).  Programmer errors
+        propagate; only data-availability failures are swallowed."""
+        from aiconfigurator.sdk.perf_database import (
+            PerfDataNotAvailableError,
+            has_perf_data_not_available_cause,
+        )
+
+        system = self._role_attr(role, "system_name")
+        backend = self._role_attr(role, "backend_name")
+        version = self._role_attr(role, "backend_version")
+        if not (system and backend and version):
+            return None
+        try:
+            return self._load_database(system, backend, version)
+        except (PerfDataNotAvailableError, FileNotFoundError) as exc:
+            logger.debug("perf DB unavailable for %s role (%s/%s/%s): %s", role, system, backend, version, exc)
+            return None
+        except Exception as exc:
+            # Match the legacy "DB error" envelope (e.g. wrapped FileNotFoundError
+            # inside RuntimeError) without swallowing programmer typos.
+            if not has_perf_data_not_available_cause(exc):
+                raise
+            logger.debug("perf DB unavailable for %s role (%s/%s/%s): %s", role, system, backend, version, exc)
+            return None
+
+    def _context_fmha_supported_modes(self, role: str) -> list[str]:
+        """FMHA modes with perf data for this role's fmha-keyed context-attention
+        op, jointly with the role's resolved kv-cache mode (an fmha slice that
+        exists only under a different kv dtype cannot serve this role's
+        queries).  Returns [] when the DB (or the op's table) is unavailable,
+        meaning "no information" -- callers must not read that as "nothing
+        supported"."""
+        from aiconfigurator.sdk.perf_database import context_fmha_supported_modes
+
+        database = self._try_load_role_database(role)
+        if database is None:
+            return []
+        ctx_op = self._attention_op_keys(role)[0]
+        if ctx_op == "context_mla" and self._attention_quant_identity_mixed(role):
+            # Mixed-projection checkpoints (e.g. V3.1-NVFP4: BF16 q/kv + NVFP4
+            # o_proj) bypass the profiled MLA-module row — no single-gemm_type
+            # module identity matches — so fmha availability must be judged on
+            # the granular table alone: a module-only fp8 slice cannot serve
+            # these models' queries.
+            ctx_op = "context_mla_granular"
+        return context_fmha_supported_modes(
+            database,
+            ctx_op,
+            self._role_attr(role, "kvcache_quant_mode"),
+        )
+
+    def _attention_quant_identity_mixed(self, role: str) -> bool:
+        """Whether the checkpoint's attention projections diverge in dtype
+        (some excluded from quantization, some not) under this role's gemm
+        mode — the condition that makes DeepSeek-family models bypass the
+        profiled MLA-module row (see DeepSeekModel.__init__)."""
+        from aiconfigurator_core.sdk.models.helpers import attention_projection_exclusions
+
+        if self._role_attr(role, "gemm_quant_mode") == common.GEMMQuantMode.bfloat16:
+            return False  # everything runs BF16 -> uniform identity
+        excl = attention_projection_exclusions(self._raw_config) & {"q", "kv", "o"}
+        return bool(excl) and excl != {"q", "kv", "o"}
 
     def _resolve_search_space(self) -> None:
         roles = ["agg"] if self.serving_mode == "agg" else ["prefill", "decode"]
@@ -837,6 +982,10 @@ class Task:
         def _set(name: str, values: list[int]) -> None:
             if getattr(self, name) is None:
                 setattr(self, name, values)
+
+        # CP auto-sweep for validated families (sglang); [1] otherwise. agg runs
+        # prefill in-worker, so cp applies; decode-cp=1 is enforced in iter_parallel.
+        _set("agg_cp_candidates", _default_cp_list_for(self._model_family, self.backend_name))
 
         if not self._is_moe:
             blackwell = self.system_name in ("gb200", "gb300")
@@ -930,10 +1079,23 @@ class Task:
             "dp_list": f"{role}_dp_candidates",
             "moe_tp_list": f"{role}_moe_tp_candidates",
             "moe_ep_list": f"{role}_moe_ep_candidates",
+            "cp_list": f"{role}_cp_candidates",
         }
         for k_src, k_attr in map_to_attr.items():
             if getattr(self, k_attr) is None:
-                setattr(self, k_attr, src[k_src])
+                if k_src == "cp_list":
+                    # Decode is always cp=1 (CP is prefill-only). prefill/agg
+                    # auto-sweep cp for CP-validated families (else [1]); an
+                    # explicit worker-config cp_list still wins. A user-supplied
+                    # non-1 decode cp is rejected in iter_parallel.
+                    if role == "decode":
+                        value = [1]
+                    else:
+                        backend = self._role_attr(role, "backend_name")
+                        value = src.get(k_src, _default_cp_list_for(self._model_family, backend))
+                else:
+                    value = src[k_src]
+                setattr(self, k_attr, value)
 
     # =====================================================================
     # Role attribute access (no fallback across prefixes — strict discipline)
@@ -979,8 +1141,8 @@ class Task:
             kvcache_quant_mode=self._role_attr(role, "kvcache_quant_mode"),
             fmha_quant_mode=self._role_attr(role, "fmha_quant_mode"),
             comm_quant_mode=self._role_attr(role, "comm_quant_mode"),
-            nextn=self.nextn or 0,
-            nextn_accept_rates=self.nextn_accept_rates,
+            nextn=self.nextn,
+            enable_encoder_dp=self.enable_encoder_dp,
             enable_wideep=self._role_attr(role, "enable_wideep"),
             enable_eplb=self._role_attr(role, "enable_eplb"),
             # moe_backend / attention_backend / wideep_num_slots are shared across roles
@@ -994,8 +1156,12 @@ class Task:
             wideep_num_slots=self.wideep_num_slots,
         )
 
+    def build_speculative_profile(self) -> SpeculativeDecodingProfile:
+        """Build the upper-layer expected-progress assumption for prediction."""
+        return SpeculativeDecodingProfile.from_inputs(self.nextn, self.nextn_accepted)
+
     def iter_parallel(self, role: Literal["agg", "prefill", "decode"]) -> Iterator[ParallelChoice]:
-        """Yield (tp, pp, dp, moe_tp, moe_ep) tuples for the role.
+        """Yield (tp, pp, dp, moe_tp, moe_ep, cp) tuples for the role.
 
         Uses sdk.utils.enumerate_parallel_config so MoE constraints match
         the legacy path exactly.
@@ -1005,6 +1171,15 @@ class Task:
         def _cands(dim: str) -> list[int]:
             return getattr(self, f"{prefix}{dim}_candidates")
 
+        # CP is modeled for context/prefill only; decode must be cp=1. Fail loud
+        # rather than silently coercing a user-supplied decode cp>1.
+        cp_list = _cands("cp") or [1]
+        if role == "decode" and any(c != 1 for c in cp_list):
+            raise ValueError(
+                f"decode CP must be 1 (CP is modeled for prefill only); got "
+                f"decode_cp_candidates={cp_list}. Enable CP via prefill/agg instead."
+            )
+
         return iter(
             enumerate_parallel_config(
                 num_gpu_list=_cands("num_gpu"),
@@ -1013,6 +1188,7 @@ class Task:
                 dp_list=_cands("dp"),
                 moe_tp_list=_cands("moe_tp"),
                 moe_ep_list=_cands("moe_ep"),
+                cp_list=cp_list,
                 is_moe=self._is_moe,
                 backend=common.BackendName[self._role_attr(role, "backend_name")],
                 enable_wideep=self._role_attr(role, "enable_wideep"),
@@ -1065,8 +1241,6 @@ class Task:
             raise ValueError("agg mode requires model_path")
         if not self.system_name:
             raise ValueError("agg mode requires system_name")
-        if self.backend_name == "vllm" and self._model_family == "DEEPSEEK":
-            raise NotImplementedError("AIConfigurator does not yet support the DeepSeek family on the vLLM backend.")
         # fp8_static is not hard-gated to trtllm: it is derived from the dynamic
         # fp8 GEMM minus compute_scale/scale_matrix overhead and works on any
         # backend whose perf DB carries those tables.  _validate_database_quant_modes
@@ -1088,14 +1262,8 @@ class Task:
             )
         if not self.prefill_system_name or not self.decode_system_name:
             raise ValueError("disagg mode requires both prefill_system_name and decode_system_name.")
-        for role in ("prefill", "decode"):
-            backend = self._role_attr(role, "backend_name")
-            # fp8_static is not hard-gated to trtllm (see _validate_agg); the
-            # per-role DB check in _validate_database_quant_modes governs support.
-            if backend == "vllm" and self._model_family == "DEEPSEEK":
-                raise NotImplementedError(
-                    f"AIConfigurator does not yet support the DeepSeek family on the vLLM backend ({role} side)."
-                )
+        # fp8_static is not hard-gated to trtllm (see _validate_agg); the
+        # per-role DB check in _validate_database_quant_modes governs support.
 
     def _validate_database_quant_modes(self) -> None:
         """Validate user's quant modes against the perf database's supported list.
@@ -1129,10 +1297,6 @@ class Task:
     ) -> None:
         """For one role, fetch its perf DB and verify each quant mode is supported."""
         from aiconfigurator.sdk.errors import UnsupportedWideepConfigError
-        from aiconfigurator.sdk.perf_database import (
-            PerfDataNotAvailableError,
-            has_perf_data_not_available_cause,
-        )
 
         system = self._role_attr(role, "system_name")
         backend = self._role_attr(role, "backend_name")
@@ -1140,19 +1304,8 @@ class Task:
         if not (system and backend and version):
             return  # nothing to validate against
 
-        try:
-            database = self._load_database(system, backend, version)
-        except (PerfDataNotAvailableError, FileNotFoundError) as exc:
-            # DB unavailable; let sweep surface the real error later.
-            logger.debug("validate: skipping DB-side quant check (DB unavailable): %s", exc)
-            database = None
-        except Exception as exc:
-            # Match the legacy "DB error" envelope (e.g. wrapped FileNotFoundError
-            # inside RuntimeError) without swallowing programmer typos.
-            if not has_perf_data_not_available_cause(exc):
-                raise
-            logger.debug("validate: skipping DB-side quant check (DB unavailable): %s", exc)
-            database = None
+        # DB unavailable; let sweep surface the real error later.
+        database = self._try_load_role_database(role)
 
         if database is None:
             # In SILICON mode the DB must exist; fp8_static is derived from
@@ -1169,25 +1322,42 @@ class Task:
             return
 
         supported: dict = getattr(database, "supported_quant_mode", {}) or {}
-        enable_wideep = bool(self._role_attr(role, "enable_wideep"))
         moe_backend = self.moe_backend  # shared across roles
         is_moe = self._is_moe
-        fam = self._model_family
 
         # Pick the attention-module op keys for this (model family, backend, wideep).
-        if fam == "DEEPSEEKV4":
-            ctx_op, gen_op = "deepseek_v4_context_module", "deepseek_v4_generation_module"
-        elif fam == "DEEPSEEKV32":
-            ctx_op, gen_op = "dsa_context_module", "dsa_generation_module"
-        elif fam in ("DEEPSEEK", "KIMIK25") and backend != "vllm":
-            if backend == "sglang" and enable_wideep:
-                ctx_op, gen_op = "wideep_context_mla", "wideep_generation_mla"
-            else:
-                ctx_op, gen_op = "context_mla", "generation_mla"
-        else:
-            ctx_op, gen_op = "context_attention", "generation_attention"
+        ctx_op, gen_op = self._attention_op_keys(role)
 
-        def _check(op: str, mode: Any) -> None:
+        # supported_quant_mode is a DATA-PRESENCE list (which quants the DB carries
+        # tables for), not a backend-capability list. In SILICON that equals what we
+        # can model. In HYBRID/EMPIRICAL the MoE util-empirical path can synthesize a
+        # quant from a collected quant that shares its (memory, compute) profile
+        # (XQUANT cross-quant transfer, see operations/moe.py) -- only MoE implements
+        # this, so only MoE relaxes. Truly-unreachable quants (no same-profile data)
+        # still fail early here rather than crashing late in the sweep.
+        # Admission via the XQUANT cross-quant transfer only holds if (a) we're in a
+        # non-SILICON mode AND (b) the resolved transfer policy actually enables XQUANT.
+        # Otherwise operations/moe.py rejects the quant at query time by policy, so
+        # validate must not pre-admit it (e.g. transfer_policy="off"/"conservative").
+        xquant_enabled = self.database_mode not in (
+            None,
+            common.DatabaseMode.SILICON.name,
+        ) and common.TransferKind.XQUANT in common.resolve_transfer_policy(self.transfer_policy)
+
+        def _profile_reachable(mode: Any, supported_names: list) -> bool:
+            enum_cls = type(mode)
+            val = getattr(mode, "value", None)
+            qp = (getattr(val, "memory", None), getattr(val, "compute", None))
+            for nm in supported_names:
+                try:
+                    other = enum_cls[nm].value
+                except (KeyError, AttributeError):
+                    continue
+                if (getattr(other, "memory", None), getattr(other, "compute", None)) == qp:
+                    return True
+            return False
+
+        def _check(op: str, mode: Any, *, profile_transfer: bool = False) -> None:
             if mode is None:
                 return
             modes = supported.get(op, []) or []
@@ -1196,6 +1366,15 @@ class Task:
             name = mode.name if hasattr(mode, "name") else str(mode)
             if name in modes:
                 return
+            # Modes that normalize to a different table name for perf queries
+            # (nvfp4_wo -> bfloat16, w4a16_mxfp4_cutlass -> w4a16_mxfp4) are
+            # accepted when the target table mode is supported.
+            validation_aliases = {"nvfp4_wo": "bfloat16", "w4a16_mxfp4_cutlass": "w4a16_mxfp4"}
+            alias = validation_aliases.get(name)
+            if alias and alias in modes:
+                return
+            if profile_transfer and xquant_enabled and _profile_reachable(mode, modes):
+                return  # transfer-reachable in HYBRID/EMPIRICAL with XQUANT enabled
             exc_type = UnsupportedWideepConfigError if op.startswith("wideep_") else ValueError
             raise exc_type(
                 f"Unsupported {op} quant mode {name!r} for system={system!r}, "
@@ -1212,11 +1391,11 @@ class Task:
             if backend == "sglang" and moe_backend == "deepep_moe":
                 # WideEP MoE: per-phase op keys (raises UnsupportedWideepConfigError).
                 if validate_context:
-                    _check("wideep_context_moe", moe_mode)
+                    _check("wideep_context_moe", moe_mode, profile_transfer=True)
                 if validate_generation:
-                    _check("wideep_generation_moe", moe_mode)
+                    _check("wideep_generation_moe", moe_mode, profile_transfer=True)
             else:
-                _check("moe", moe_mode)
+                _check("moe", moe_mode, profile_transfer=True)
 
         # FMHA: only meaningful for context-using workers (agg, prefill).
         if validate_context:
@@ -1348,6 +1527,7 @@ class Task:
             "decode_model_config": self.build_model_config(role="decode"),
             "decode_parallel_config_list": decode_parallel,
             "decode_latency_correction": self.decode_latency_correction,
+            "free_gpu_memory_fraction": self.free_gpu_memory_fraction,
             "prefill_max_num_tokens": max(self.prefill_max_batch_size, 1) * self.isl,
             "decode_max_num_tokens": self.decode_max_batch_size,
             "prefill_num_worker_list": prefill_worker_list,
@@ -1365,21 +1545,20 @@ class Task:
 
     def _load_database(self, system: str, backend: str, version: str):
         """Load the perf DB honoring database_mode (SILICON/HYBRID/EMPIRICAL). Non-SILICON
-        modes allow missing measured data; the db's DEFAULT mode is also switched so
-        predictions actually use SOL/empirical (the get_database arg only drives shared-layer
-        loading -- the prediction behaviour is set via set_default_database_mode). Mirrors
-        v1 _get_database."""
-        from aiconfigurator.sdk.perf_database import get_database
+        modes allow missing measured data. Returns an immutable, configuration-scoped
+        lightweight view so mode and transfer policy cannot mutate the process-cached
+        data template."""
+        from aiconfigurator.sdk.perf_database import get_database_view
 
         allow_missing = self.database_mode is not None and self.database_mode != common.DatabaseMode.SILICON.name
-        db = get_database(system, backend, version, allow_missing_data=allow_missing, database_mode=self.database_mode)
-        if db is not None and self.database_mode is not None:
-            mode = common.DatabaseMode[self.database_mode]
-            if mode != db.get_default_database_mode():
-                # set_default_database_mode mutates; copy so the module-cached db isn't polluted.
-                db = copy.deepcopy(db)
-                db.set_default_database_mode(mode)
-        return db
+        return get_database_view(
+            system,
+            backend,
+            version,
+            allow_missing_data=allow_missing,
+            database_mode=self.database_mode,
+            transfer_policy=self.transfer_policy,
+        )
 
     def run(self, *, autoscale: bool = False, validate: bool = True):
         """Run the sweep and return a feasible-candidate DataFrame.
@@ -1416,6 +1595,7 @@ class Task:
             return sweep_agg(
                 **self.sweep_agg_kwargs(database=database),
                 predictor=self.predictor,
+                speculative_profile=self.build_speculative_profile(),
             )
         if self.serving_mode == "disagg":
             prefill_database = self._load_database(
@@ -1428,6 +1608,7 @@ class Task:
                 **self.sweep_disagg_kwargs(prefill_database=prefill_database, decode_database=decode_database),
                 autoscale=autoscale,
                 predictor=self.predictor,
+                speculative_profile=self.build_speculative_profile(),
             )
         raise ValueError(f"Invalid serving_mode: {self.serving_mode!r}")
 
@@ -1504,6 +1685,7 @@ class Task:
             runtime_config=runtime_config,
             ctx_tokens=ctx_tokens if ctx_tokens is not None else self.isl,
             predictor=self.predictor,
+            speculative_profile=self.build_speculative_profile(),
             **backend_kwargs,
         )
         if summary.check_oom():
@@ -1572,6 +1754,10 @@ class Task:
         p_backend = get_backend(self.prefill_backend_name)
         p_model = get_model(self.prefill_model_path, p_mc, self.prefill_backend_name)
 
+        worker_kwargs: dict[str, Any] = {}
+        if self.free_gpu_memory_fraction is not None:
+            worker_kwargs["free_gpu_memory_fraction"] = self.free_gpu_memory_fraction
+
         p_summary = predict_disagg_worker(
             model=p_model,
             backend=p_backend,
@@ -1580,11 +1766,13 @@ class Task:
             role="prefill",
             latency_correction=self.prefill_latency_correction,
             predictor=self.predictor,
+            speculative_profile=self.build_speculative_profile(),
+            **worker_kwargs,
         )
-        if p_summary.check_oom():
+        if p_summary.check_oom() or p_summary.check_kv_cache_oom():
             raise RuntimeError(
                 f"OOM in prefill phase at tp={prefill_tp} pp={prefill_pp} dp={prefill_dp} "
-                f"batch_size={prefill_batch_size}."
+                f"batch_size={prefill_batch_size} (memory capacity or KV-cache budget exceeded)."
             )
 
         # --- Decode phase ---
@@ -1608,10 +1796,13 @@ class Task:
             role="decode",
             latency_correction=self.decode_latency_correction,
             predictor=self.predictor,
+            speculative_profile=self.build_speculative_profile(),
+            **worker_kwargs,
         )
-        if d_summary.check_oom():
+        if d_summary.check_oom() or d_summary.check_kv_cache_oom():
             raise RuntimeError(
-                f"OOM in decode phase at tp={decode_tp} pp={decode_pp} dp={decode_dp} batch_size={decode_batch_size}."
+                f"OOM in decode phase at tp={decode_tp} pp={decode_pp} dp={decode_dp} "
+                f"batch_size={decode_batch_size} (memory capacity or KV-cache budget exceeded)."
             )
 
         # --- Rate-match the pair ---

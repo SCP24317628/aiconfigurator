@@ -97,7 +97,7 @@ def _build_afd_session_with_phase_metrics(
         database=FakeDatabase(),
         backend=SimpleNamespace(
             name=SimpleNamespace(value="test-backend"),
-            get_default_free_gpu_memory_fraction=lambda: 0.9,
+            get_default_free_gpu_memory_fraction=lambda *_a, **_k: 0.9,
         ),
         afd_config=afd_config,
     )
@@ -231,8 +231,9 @@ def test_run_afd_estimate_passes_prefix_and_nextn(monkeypatch):
             captured["a_model_config"] = kwargs["a_model_config"]
             captured["f_model_config"] = kwargs["f_model_config"]
 
-        def run_afd(self, runtime_config, **_kwargs):
+        def run_afd(self, runtime_config, **kwargs):
             captured["runtime_config"] = runtime_config
+            captured["speculative_profile"] = kwargs["speculative_profile"]
             summary = InferenceSummary(runtime_config)
             summary.set_oom(False)
             summary.set_result_dict(
@@ -286,14 +287,15 @@ def test_run_afd_estimate_passes_prefix_and_nextn(monkeypatch):
         max_seq_len=None,
         prefix=32,
         nextn=2,
-        nextn_accept_rates=[0.85, 0.3],
+        nextn_accepted=0.85,
     )
 
     assert captured["runtime_config"].prefix == 32
     assert captured["a_model_config"].nextn == 2
     assert captured["f_model_config"].nextn == 2
-    assert captured["a_model_config"].nextn_accept_rates == [0.85, 0.3]
-    assert captured["f_model_config"].nextn_accept_rates == [0.85, 0.3]
+    assert not hasattr(captured["a_model_config"], "nextn_accepted")
+    assert not hasattr(captured["f_model_config"], "nextn_accepted")
+    assert captured["speculative_profile"].expected_accepted_tokens == 0.85
 
 
 def test_afd_prefill_uses_uncached_prefix_suffix_for_token_math(monkeypatch):
@@ -778,13 +780,16 @@ def test_cli_estimate_afd_combined_with_pd_true_runs_static_combine(monkeypatch)
     monkeypatch.setattr(api, "_run_static_estimate", fake_run_static_estimate)
 
     result = api.cli_estimate(
-        **_afd_cli_estimate_kwargs(afd_combined_with_pd=True),
+        **_afd_cli_estimate_kwargs(afd_combined_with_pd=True, enable_encoder_dp=False),
     )
 
     # Merged result should reflect static_ctx TTFT and AFD TPOT, plus the
     # summed GPU budget — the canonical "AFD-decode + regular-prefill" sizing.
     assert "afd_kwargs" in captured and "static_kwargs" in captured
     assert captured["static_kwargs"]["static_mode"] == "static_ctx"
+    # The encoder-parallelism choice must reach the static complement: a
+    # non-default value proves forwarding rather than the callee default.
+    assert captured["static_kwargs"]["enable_encoder_dp"] is False
     assert result.ttft == 50.0
     assert result.tpot == 5.0
     assert result.num_total_gpus == 12
@@ -804,3 +809,32 @@ def test_cli_estimate_afd_phase_both_with_combined_with_pd_raises(monkeypatch):
         api.cli_estimate(
             **_afd_cli_estimate_kwargs(afd_phase="both", afd_combined_with_pd=True),
         )
+
+
+def test_cli_main_estimate_value_error_exits_without_traceback(monkeypatch):
+    """Estimate-mode validation errors surface as a concise CLI error.
+
+    Invalid AFD sizing (e.g. ``f_moe_ep_size`` not dividing ``f_tp_size``)
+    raises ``ValueError`` deep in the SDK. ``cli.main.main`` must convert it
+    to ``SystemExit`` so the user sees the actionable message instead of a
+    full Python traceback.
+    """
+    from types import SimpleNamespace
+
+    import aiconfigurator.cli.main as cli_main
+    import aiconfigurator.sdk.perf_database as perf_database
+
+    monkeypatch.setattr(perf_database, "set_systems_paths", lambda _paths: None)
+    monkeypatch.setattr(
+        cli_main,
+        "_run_estimate_mode",
+        lambda _args: (_ for _ in ()).throw(ValueError("f_moe_ep_size (7) must be a positive divisor")),
+    )
+
+    args = SimpleNamespace(mode="estimate", systems_paths=None, top_n=5, no_color=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(args)
+
+    # SystemExit carries the plain message (no traceback, exit code 1).
+    assert "f_moe_ep_size (7) must be a positive divisor" in str(exc_info.value)

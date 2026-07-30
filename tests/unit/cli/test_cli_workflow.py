@@ -17,6 +17,9 @@ import pytest
 
 from aiconfigurator.cli.main import (
     _execute_tasks,
+    _resolve_cli_log_level,
+    _sglang_deepep_perf_data_skip_reason,
+    _validate_fpm_sweep_tasks,
     build_default_tasks,
     build_experiment_tasks,
     configure_parser,
@@ -28,8 +31,70 @@ from aiconfigurator.sdk.errors import NoFeasibleConfigError
 pytestmark = pytest.mark.unit
 
 
+class TestCLILogLevelResolution:
+    def test_defaults_to_info(self, monkeypatch) -> None:
+        monkeypatch.delenv("AICONFIGURATOR_LOG_LEVEL", raising=False)
+        args = argparse.Namespace(log_level=None)
+        assert _resolve_cli_log_level(args) == logging.INFO
+
+    def test_env_var_controls_level(self, monkeypatch) -> None:
+        monkeypatch.setenv("AICONFIGURATOR_LOG_LEVEL", "debug")
+        args = argparse.Namespace(log_level=None)
+        assert _resolve_cli_log_level(args) == logging.DEBUG
+
+    def test_cli_flag_overrides_env_var(self, monkeypatch) -> None:
+        monkeypatch.setenv("AICONFIGURATOR_LOG_LEVEL", "warning")
+        args = argparse.Namespace(log_level="DEBUG")
+        assert _resolve_cli_log_level(args) == logging.DEBUG
+
+    def test_invalid_env_var_falls_back_to_info(self, monkeypatch) -> None:
+        monkeypatch.setenv("AICONFIGURATOR_LOG_LEVEL", "not-a-level")
+        args = argparse.Namespace(log_level=None)
+        assert _resolve_cli_log_level(args) == logging.INFO
+
+    def test_legacy_debug_flag_resolves_to_debug(self, monkeypatch) -> None:
+        monkeypatch.delenv("AICONFIGURATOR_LOG_LEVEL", raising=False)
+        args = argparse.Namespace(log_level=None, debug=True)
+        assert _resolve_cli_log_level(args) == logging.DEBUG
+
+    def test_env_var_overrides_legacy_debug(self, monkeypatch) -> None:
+        monkeypatch.setenv("AICONFIGURATOR_LOG_LEVEL", "warning")
+        args = argparse.Namespace(log_level=None, debug=True)
+        assert _resolve_cli_log_level(args) == logging.WARNING
+
+    def test_cli_flag_overrides_legacy_debug(self, monkeypatch) -> None:
+        monkeypatch.setenv("AICONFIGURATOR_LOG_LEVEL", "warning")
+        args = argparse.Namespace(log_level="ERROR", debug=True)
+        assert _resolve_cli_log_level(args) == logging.ERROR
+
+
 class TestCLIIntegration:
     """Workflow tests for the CLI orchestration layer (builders/executor/save)."""
+
+    @patch("aiconfigurator.cli.main._run_recommend")
+    def test_cli_recommend_resolves_nextn_before_dispatch(self, mock_run_recommend, cli_parser, monkeypatch):
+        monkeypatch.setattr("aiconfigurator.cli.main.resolve_nextn_auto", lambda _model_path: 2)
+        args = cli_parser.parse_args(
+            [
+                "recommend",
+                "--model-path",
+                "deepseek-ai/DeepSeek-V3",
+                "--system",
+                "h200_sxm",
+                "--target-request-rate",
+                "10",
+                "--nextn",
+                "auto",
+                "--nextn-accepted",
+                "0.7",
+            ]
+        )
+
+        cli_main(args)
+
+        assert args.nextn == 2
+        assert args.nextn_accepted == 0.7
+        mock_run_recommend.assert_called_once_with(args)
 
     @patch("aiconfigurator.cli.main._execute_tasks")
     @patch("aiconfigurator.cli.main.build_default_tasks")
@@ -47,6 +112,7 @@ class TestCLIIntegration:
             {"agg": mock_results_df},
             mock_best_throughputs,
             {"agg": {"ttft": 100.0, "tpot": 10.0, "request_latency": 1000.0}},
+            {},
         )
 
         with patch("aiconfigurator.cli.main.save_results") as mock_save:
@@ -89,6 +155,7 @@ class TestCLIIntegration:
             {"my_exp": mock_results_df},
             mock_best_throughputs,
             {"my_exp": {"ttft": 100.0, "tpot": 10.0, "request_latency": 1000.0}},
+            {},
         )
 
         args = cli_args_factory(
@@ -123,7 +190,7 @@ class TestCLIIntegration:
     @patch("aiconfigurator.cli.main._execute_tasks")
     def test_cli_main_build_dispatch(self, mock_execute, mode, build_patch, cli_args_factory, mock_exp_yaml_path):
         """Main should dispatch to the correct builder based on CLI mode."""
-        mock_execute.return_value = ("agg", {}, {}, {}, {})
+        mock_execute.return_value = ("agg", {"agg": True}, {}, {}, {}, {})
         mock_task_config = MagicMock(name="TaskConfig")
 
         with patch(build_patch) as mock_builder:
@@ -136,6 +203,62 @@ class TestCLIIntegration:
 
         mock_builder.assert_called_once()
         mock_execute.assert_called_once_with({"agg": mock_task_config}, mode, top_n=5)
+
+    def test_fpm_sweep_validation_accepts_vllm_aggregated_tasks(self):
+        args = argparse.Namespace(deployment_target="fpm")
+        tasks = {
+            "agg": argparse.Namespace(
+                serving_mode="agg",
+                primary_backend_name="vllm",
+            )
+        }
+
+        _validate_fpm_sweep_tasks(args, tasks)
+
+    @patch("aiconfigurator.cli.main._execute_tasks")
+    @patch("aiconfigurator.cli.main.build_experiment_tasks")
+    def test_cli_fpm_rejects_incompatible_tasks_before_sweep(
+        self,
+        mock_build_exp,
+        mock_execute,
+        cli_args_factory,
+        mock_exp_yaml_path,
+    ):
+        mock_build_exp.return_value = {
+            "disagg": argparse.Namespace(
+                serving_mode="disagg",
+                primary_backend_name="vllm",
+            ),
+            "agg_trtllm": argparse.Namespace(
+                serving_mode="agg",
+                primary_backend_name="trtllm",
+            ),
+        }
+        args = cli_args_factory(
+            mode="exp",
+            extra_args=[
+                "--yaml-path",
+                str(mock_exp_yaml_path),
+                "--deployment-target",
+                "fpm",
+            ],
+        )
+
+        with pytest.raises(SystemExit, match="supports only vLLM aggregated tasks"):
+            cli_main(args)
+
+        mock_execute.assert_not_called()
+
+    def test_cli_default_missing_required_inputs_raises(self, capsys):
+        """Default mode still requires model, system, and GPU inputs."""
+        parser = argparse.ArgumentParser()
+        configure_parser(parser)
+
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["default"])
+
+        assert exc_info.value.code == 2
+        assert "the following arguments are required" in capsys.readouterr().err
 
     @pytest.mark.parametrize(
         "builder_patch",
@@ -204,10 +327,15 @@ class TestCLIIntegration:
             "No configuration satisfied the TTFT/TPOT constraints."
         )
 
-        with caplog.at_level(logging.WARNING), pytest.raises(SystemExit) as exc_info:
-            _execute_tasks({"agg": mock_task_config}, mode="default", strict_sla=True)
+        with caplog.at_level(logging.WARNING):
+            result = _execute_tasks({"agg": mock_task_config}, mode="default", strict_sla=True)
 
-        assert exc_info.value.code == 1
+        assert len(result) == 6
+        chosen_exp, best_configs, _, _, _, outcomes = result
+        assert chosen_exp == "none"
+        assert not best_configs
+        assert "agg" in outcomes
+        assert isinstance(outcomes["agg"].error, NoFeasibleConfigError)
         assert "Experiment agg found no SLA-feasible configuration" in caplog.text
         assert "No successful experiment runs to compare." in caplog.text
         assert "Traceback" not in caplog.text
@@ -230,7 +358,7 @@ exp_with_db_mode:
 
         mock_task_config = MagicMock(name="TaskConfig")
         mock_build_exp.return_value = {"exp_with_db_mode": mock_task_config}
-        mock_execute.return_value = ("exp_with_db_mode", {}, {}, {}, {})
+        mock_execute.return_value = ("exp_with_db_mode", {"exp_with_db_mode": True}, {}, {}, {}, {})
 
         parser = argparse.ArgumentParser()
         configure_parser(parser)
@@ -252,7 +380,7 @@ exp_with_db_mode:
     ):
         """The shared --engine-step-backend flag should apply to exp mode."""
         mock_build_exp.return_value = {"my_exp": MagicMock(name="TaskConfig")}
-        mock_execute.return_value = ("my_exp", {}, {}, {}, {})
+        mock_execute.return_value = ("my_exp", {"my_exp": True}, {}, {}, {}, {})
 
         args = cli_args_factory(
             mode="exp",
@@ -312,6 +440,110 @@ class TestBuildDefaultTaskConfigs:
 
     @patch("aiconfigurator.cli.main.Task")
     @patch("aiconfigurator.cli.main.perf_database.get_supported_databases")
+    def test_silicon_mode_allows_declared_explicit_version_for_shared_layer(
+        self,
+        mock_supported_databases,
+        mock_task_config,
+    ):
+        """A marker-only version dir is enough to declare shared-layer reuse."""
+        mock_supported_databases.return_value = {"b200_sxm": {"sglang": ["0.5.10", "0.5.12"]}}
+        mock_task_config.return_value = MagicMock(name="MockTaskConfig")
+
+        result = build_default_tasks(
+            model_path="Qwen/Qwen3-0.6B",
+            total_gpus=4,
+            system="b200_sxm",
+            backend="sglang",
+            backend_version="0.5.12",
+            database_mode="SILICON",
+        )
+
+        assert set(result) == {"agg", "disagg"}
+        assert mock_task_config.call_count == 2
+        assert mock_task_config.call_args_list[0].kwargs["backend_version"] == "0.5.12"
+        assert mock_task_config.call_args_list[1].kwargs["prefill_backend_version"] == "0.5.12"
+        assert mock_task_config.call_args_list[1].kwargs["decode_backend_version"] == "0.5.12"
+
+    @patch("aiconfigurator.cli.main.Task")
+    @patch("aiconfigurator.cli.main.perf_database.get_supported_databases")
+    def test_silicon_mode_rejects_undeclared_explicit_version_for_shared_layer(
+        self,
+        mock_supported_databases,
+        mock_task_config,
+    ):
+        """Sibling data does not make an arbitrary framework version supported."""
+        mock_supported_databases.return_value = {"b200_sxm": {"sglang": ["0.5.10"]}}
+        mock_task_config.return_value = MagicMock(name="MockTaskConfig")
+
+        with pytest.raises(SystemExit):
+            build_default_tasks(
+                model_path="Qwen/Qwen3-0.6B",
+                total_gpus=4,
+                system="b200_sxm",
+                backend="sglang",
+                backend_version="0.5.12",
+                database_mode="SILICON",
+            )
+
+        mock_task_config.assert_not_called()
+
+    @patch("aiconfigurator.cli.main.Task")
+    @patch("aiconfigurator.cli.main.perf_database.get_supported_databases")
+    def test_auto_hybrid_mode_filters_to_declared_shared_layer_versions(
+        self,
+        mock_supported_databases,
+        mock_task_config,
+    ):
+        """Auto backend sweeps in HYBRID should only include declared framework versions."""
+        mock_supported_databases.return_value = {
+            "b200_sxm": {
+                "trtllm": ["1.3.0rc10"],
+                "sglang": ["0.5.10", "0.5.12"],
+                "vllm": ["0.19.0"],
+            }
+        }
+        mock_task_config.return_value = MagicMock(name="MockTaskConfig")
+
+        result = build_default_tasks(
+            model_path="Qwen/Qwen3-0.6B",
+            total_gpus=4,
+            system="b200_sxm",
+            backend="auto",
+            backend_version="0.5.12",
+            database_mode="HYBRID",
+        )
+
+        assert set(result) == {"agg_sglang", "disagg_sglang"}
+        assert mock_task_config.call_count == 2
+        assert mock_task_config.call_args_list[0].kwargs["backend_version"] == "0.5.12"
+        assert mock_task_config.call_args_list[1].kwargs["prefill_backend_version"] == "0.5.12"
+        assert mock_task_config.call_args_list[1].kwargs["decode_backend_version"] == "0.5.12"
+
+    @patch("aiconfigurator.cli.main.Task")
+    @patch("aiconfigurator.cli.main.perf_database.get_supported_databases")
+    def test_hybrid_mode_rejects_undeclared_explicit_version_for_shared_layer(
+        self,
+        mock_supported_databases,
+        mock_task_config,
+    ):
+        """HYBRID also uses shared-layer data, so arbitrary framework versions are rejected."""
+        mock_supported_databases.return_value = {"b200_sxm": {"sglang": ["0.5.10"]}}
+        mock_task_config.return_value = MagicMock(name="MockTaskConfig")
+
+        with pytest.raises(SystemExit):
+            build_default_tasks(
+                model_path="Qwen/Qwen3-0.6B",
+                total_gpus=4,
+                system="b200_sxm",
+                backend="sglang",
+                backend_version="0.5.12",
+                database_mode="HYBRID",
+            )
+
+        mock_task_config.assert_not_called()
+
+    @patch("aiconfigurator.cli.main.Task")
+    @patch("aiconfigurator.cli.main.perf_database.get_supported_databases")
     def test_auto_megamoe_sweeps_only_sglang(self, mock_supported_databases, mock_task_config):
         """The SGLang-only MegaMoE override must not be passed to TRT-LLM or vLLM."""
         mock_supported_databases.return_value = {
@@ -353,7 +585,10 @@ class TestBuildDefaultTaskConfigs:
         mock_task_config.return_value = MagicMock(name="MockTaskConfig")
         caplog.set_level(logging.INFO, logger="aiconfigurator.cli.main")
 
-        with patch("aiconfigurator.cli.main._get_backend_data_path", return_value=str(tmp_path)):
+        with patch(
+            "aiconfigurator.cli.main._get_backend_data_path",
+            side_effect=lambda system, backend, version, filename: str(tmp_path / filename),
+        ):
             result = build_default_tasks(
                 model_path="deepseek-ai/DeepSeek-R1",
                 total_gpus=8,
@@ -382,7 +617,10 @@ class TestBuildDefaultTaskConfigs:
         for filename in ("wideep_deepep_normal_perf.parquet", "wideep_deepep_ll_perf.parquet"):
             (tmp_path / filename).write_text("header\n", encoding="utf-8")
 
-        with patch("aiconfigurator.cli.main._get_backend_data_path", return_value=str(tmp_path)):
+        with patch(
+            "aiconfigurator.cli.main._get_backend_data_path",
+            side_effect=lambda system, backend, version, filename: str(tmp_path / filename),
+        ):
             result = build_default_tasks(
                 model_path="deepseek-ai/DeepSeek-R1",
                 total_gpus=8,
@@ -393,6 +631,43 @@ class TestBuildDefaultTaskConfigs:
 
         assert set(result) == {"agg", "agg_deepep", "disagg", "disagg_deepep"}
         assert mock_task_config.call_count == 4
+
+
+class TestSglangDeepepPerfDataSkipReason:
+    """`_sglang_deepep_perf_data_skip_reason` must find DeepEP perf files under the
+    family-first layout (e.g. comm/sglang/<version>/), not just the legacy
+    sglang/<version>/ shape."""
+
+    def _write_system_yaml(self, systems_root, system_name, data_dir):
+        (systems_root / f"{system_name}.yaml").write_text(f"data_dir: {data_dir}\n", encoding="utf-8")
+
+    @patch("aiconfigurator.cli.main.perf_database.get_systems_paths")
+    def test_none_when_both_files_exist_under_family_dir(self, mock_systems_paths, tmp_path):
+        systems_root = tmp_path
+        mock_systems_paths.return_value = [str(systems_root)]
+        self._write_system_yaml(systems_root, "fake_sys", "data/fake_sys")
+
+        version_dir = systems_root / "data" / "fake_sys" / "comm" / "sglang" / "0.5.6.post2"
+        version_dir.mkdir(parents=True)
+        (version_dir / "wideep_deepep_normal_perf.parquet").write_bytes(b"stub")
+        (version_dir / "wideep_deepep_ll_perf.parquet").write_bytes(b"stub")
+
+        reason = _sglang_deepep_perf_data_skip_reason("fake_sys", None, "0.5.6.post2")
+
+        assert reason is None
+
+    @patch("aiconfigurator.cli.main.perf_database.get_systems_paths")
+    def test_names_missing_files_when_absent(self, mock_systems_paths, tmp_path):
+        systems_root = tmp_path
+        mock_systems_paths.return_value = [str(systems_root)]
+        self._write_system_yaml(systems_root, "fake_sys", "data/fake_sys")
+        (systems_root / "data" / "fake_sys").mkdir(parents=True)
+
+        reason = _sglang_deepep_perf_data_skip_reason("fake_sys", None, "0.5.6.post2")
+
+        assert reason is not None
+        assert "wideep_deepep_normal_perf.parquet" in reason
+        assert "wideep_deepep_ll_perf.parquet" in reason
 
 
 class TestBuildExperimentTaskConfigs:
@@ -428,6 +703,22 @@ class TestBuildExperimentTaskConfigs:
         assert set(by_backend) == {"rust", "python"}
         assert by_backend["rust"]["model_path"] == "Qwen/Qwen3-32B"
         assert by_backend["python"]["model_path"] == "Qwen/Qwen3-32B"
+
+    @patch("aiconfigurator.cli.main.Task")
+    def test_default_database_mode_is_passed_to_task_yaml(self, mock_task):
+        config = {
+            "default_mode": {
+                "serving_mode": "agg",
+                "model_path": "Qwen/Qwen3-32B",
+                "system_name": "h200_sxm",
+                "total_gpus": 8,
+            }
+        }
+
+        build_experiment_tasks(config=config)
+
+        yaml_data = mock_task.from_yaml.call_args.args[0]
+        assert yaml_data["database_mode"] == "SILICON"
 
 
 class TestInclusiveTpot:

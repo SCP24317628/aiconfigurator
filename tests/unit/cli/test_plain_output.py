@@ -30,9 +30,11 @@ def mock_stdout_isatty(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_logging_after_test(monkeypatch):
-    yield
-    setup_logging(no_color=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
+    setup_logging(no_color=False)
+    yield
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    setup_logging(no_color=False)
 
 
 def test_cli_parser_accepts_no_color(cli_parser):
@@ -211,6 +213,44 @@ def test_log_final_summary_no_disagg_results():
         pareto_x_axis={"agg": "tokens/s/user", "disagg": "tokens/s/user"},
         top_n=1,
     )
+
+
+def test_worker_setup_table_keeps_rows_when_sla_disabled():
+    config_df = pd.DataFrame(
+        [
+            {
+                "backend": "trtllm",
+                "tokens/s/gpu": 500.0,
+                "tokens/s/user": 100.0,
+                "request_rate": 3.0,
+                "ttft": 100.0,
+                "tpot": 10.0,
+                "request_latency": 250.0,
+                "concurrency": 2.0,
+                "num_total_gpus": 2,
+                "tp": 2,
+                "pp": 1,
+                "dp": 1,
+                "moe_tp": 1,
+                "moe_ep": 1,
+                "bs": 64,
+            }
+        ]
+    )
+
+    table = _plot_worker_setup_table(
+        "agg",
+        config_df,
+        total_gpus=2,
+        tpot_target=0.0,
+        top=1,
+        is_moe=False,
+        request_latency_target=None,
+        show_power=False,
+    )
+
+    assert "agg Top Configurations: (Ranked by tokens/s/gpu)" in table
+    assert "No configurations for agg met the TPOT constraint" not in table
 
 
 def test_draw_pareto_plain_output_is_pure_ascii():

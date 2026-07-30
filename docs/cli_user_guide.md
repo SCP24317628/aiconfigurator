@@ -1,6 +1,6 @@
 # CLI User Guide
 ## Basic Command
-As mentioned in root Readme, CLI supports five modes: `default`, `exp`, `generate`, `estimate`, and `support`. We'll go through these modes one by one.
+As mentioned in root Readme, CLI supports six modes: `default`, `recommend`, `exp`, `generate`, `estimate`, and `support`. We'll go through these modes one by one.
 
 Quantization defaults are inferred from the Hugging Face model config (`config.json` plus optional `hf_quant_config.json`).  
 For low-precision models, use a quantized HF ID (for example, `Qwen/Qwen3-32B-FP8`) or a local model directory containing those files.
@@ -9,15 +9,16 @@ For low-precision models, use a quantized HF ID (for example, `Qwen/Qwen3-32B-FP
 
 These flags are shared across modes (a few are sweep-only, as noted):
 
-- `--debug`: Enable verbose debug logging. (all modes)
+- `--log-level LEVEL`: Set the minimum log level (`CRITICAL`, `ERROR`, `WARNING`, `INFO`, `DEBUG`). Priority: `--log-level > AICONFIGURATOR_LOG_LEVEL > --debug > INFO`. (all modes)
+- `--debug`: Deprecated alias for `--log-level DEBUG`, kept for backward compatibility. Prefer `--log-level`. (all modes)
 - `--no-color`: Disable ANSI colors in output. (all modes)
 - `--save-dir DIR`: Directory to write results and generated deployment artifacts. (`default`, `exp`, `generate`, `estimate`)
 - `--top-n N`: Number of top configurations to output — per experiment in `exp` mode, or per serving mode (agg/disagg) in `default` mode. Default: `5`. (`default`, `exp`, `generate`, `estimate`)
 - `--systems-paths`: System search paths (comma-separated). Use `default` for the built-in systems path; the first match wins for an identical system/backend/version. (`default`, `exp`, `generate`, `estimate`)
-- `--deployment-target`: Generated-artifact platform — `dynamo-j2` (default), `dynamo-python`, or `llm-d`. See [Deployment Target Selection](#default-mode). (`default`, `exp`, `generate`, `estimate`)
+- `--deployment-target`: Generated-artifact platform — `dynamo-j2` (default), `dynamo-python`, `llm-d-helm`, `llm-d-kustomize`, or `fpm`. See [Deployment Target Selection](#deployment-target-selection). (`default`, `exp`, `generate`, `estimate`)
 - `--engine-step-backend`: Experimental static-latency backend — `python` (default) or `rust` (routes static step estimates through the Rust FPM estimator). (`default`, `exp`, `generate`, `estimate`)
 
-The `support` mode accepts only `--debug` and `--no-color` from this list. Generator-artifact flags (`--generator-config`, `--generator-set`, `--generator-help`, `--generator-help-backend`, `--generated-config-version`, `--generator-dynamo-version`) are documented under [Default mode](#default-mode).
+The `support` mode accepts only `--log-level`, `--debug`, and `--no-color` from this list. Generator-artifact flags (`--generator-config`, `--generator-set`, `--generator-help`, `--generator-help-backend`, `--generated-config-version`, `--generator-dynamo-version`) are documented under [Default mode](#default-mode).
 
 ## Defaults and Implicit Behavior
 
@@ -111,7 +112,7 @@ aiconfigurator cli estimate --model-path Qwen/Qwen3-32B --system h200_sxm --tp-s
 - `--system`: System name (`h200_sxm`, `h100_sxm`, `h100_pcie`, `b200_sxm`, `gb200`, `a100_sxm`, `a100_pcie`, `l40s`, `l4`, `a30`, `gb300`)
 
 **Optional arguments (shared):**
-- `--estimate-mode`: `agg` (default, IFB) or `disagg` (separate prefill/decode workers), or one of the single-pass static breakdown modes `static` / `static_ctx` / `static_gen` (mirrors the webapp Static tab)
+- `--estimate-mode`: `agg` (default, IFB) or `disagg` (separate prefill/decode workers), or one of the single-pass static breakdown modes `static` / `static_ctx` / `static_gen`
 - `--backend`: Backend name (`trtllm`, `vllm`, `sglang`). Default: `trtllm`
 - `--backend-version`: Backend database version. Default: latest
 - `--database-mode`: Database mode (`SILICON`, `HYBRID`, `EMPIRICAL`, `SOL`). Default: `SILICON`
@@ -126,12 +127,12 @@ aiconfigurator cli estimate --model-path Qwen/Qwen3-32B --system h200_sxm --tp-s
 - `--moe-ep-size` (alias `--ep`): MoE expert parallelism size (auto-inferred if omitted)
 - `--gemm-quant-mode`: GEMM quantization mode (auto-inferred from model config if omitted)
 - `--kvcache-quant-mode`: KV cache quantization mode (auto-inferred if omitted)
-- `--fmha-quant-mode`: FMHA quantization mode (auto-inferred if omitted)
+- `--fmha-quant-mode`: FMHA quantization mode (auto-inferred if omitted). DeepSeek-V3 / Kimi-K2.5 context attention (MLA prefill) has no fp8 FMHA data — auto-inferred fp8 is downgraded to `bfloat16` for context-touching estimates (agg, prefill, static, static_ctx, AFD prefill), while decode/generation keeps fp8. Explicitly passing `fp8` for a context estimate is rejected with a clear error.
 - `--moe-quant-mode`: MoE quantization mode (auto-inferred if omitted)
 - `--comm-quant-mode`: Communication quantization mode (auto-inferred; default `half`)
 - `--prefix`: Prefix cache length (subset of ISL already cached per request). Default: `0`
-- `--nextn`: Number of MTP/speculative draft tokens. Default: `0`. Unlike `cli default`, `estimate` does **not** auto-enable MTP for DeepSeek/Qwen3.5 — pass `--nextn 1` explicitly
-- `--nextn-accept-rates`: Comma-separated acceptance rates for the MTP draft tokens (only the first `--nextn` are used). Default: `0.85,0.3,0,0,0`
+- `--nextn`: MTP draft length, or `auto` to use the checkpoint's `num_nextn_predict_layers` (absent/0 keeps MTP disabled). Default: `0`; MTP is never enabled implicitly — pass `--nextn` explicitly to model it
+- `--nextn-accepted`: Average accepted draft tokens per decode step (`0 <= nextn_accepted <= nextn`). Required when the draft depth is > 0 (including via `--nextn auto`); use a measured value from your deployment
 - `--stride`: (static modes only) OSL-sweep stride used by `run_static`; ignored for `agg`/`disagg`. Default: `32`
 - `--free-gpu-memory-fraction`: Fraction of free GPU memory for KV cache. Default: `0.9`. Used to estimate max concurrent sequences and warn when batch size exceeds KV cache capacity
 - `--max-seq-len`: TRT-LLM `--max_seq_len` (default: `isl + osl`). Controls KV blocks pre-allocated per sequence; set to match your deployment for an accurate KV-capacity warning
@@ -213,7 +214,7 @@ result = cli_estimate(
 
 #### Static estimate modes (`static`, `static_ctx`, `static_gen`)
 
-`agg` and `disagg` model continuous (in-flight) batching. The three `static` modes instead run a **single forward pass** through the model — no IFB scheduling — and report the per-phase latency and memory layout for that one pass. They mirror the webapp's Static tab and are the quickest way to see where time and memory go for a given shape and parallelism.
+`agg` and `disagg` model continuous (in-flight) batching. The three `static` modes instead run a **single forward pass** through the model — no IFB scheduling — and report the per-phase latency and memory layout for that one pass. They are the quickest way to see where time and memory go for a given shape and parallelism.
 
 - `static` — one full pass over both phases; reports TTFT (context), TPOT (one decode step), and request latency.
 - `static_ctx` — context (prefill) phase only; reports TTFT.
@@ -296,7 +297,12 @@ Data Source Breakdown (per-op)
 ```
 
 ### Support mode (optional)
-This is an optional pre-flight check to verify if AIConfigurator supports a specific model and hardware combination for both aggregated and disaggregated serving modes. You can skip this and run `cli default` directly. Support is determined by a majority-vote of tests in the support matrix for models sharing the same architecture.
+This is an optional pre-flight check to verify whether collected SILICON data supports a
+specific model and hardware combination for both aggregated and disaggregated serving
+modes. You can skip this and run `cli default` directly. `PASS` rows count as support;
+`HYBRID_PASS` rows are reported separately as empirical estimability and do not make the
+default SILICON support check pass. For unlisted models, support is determined by a
+majority vote of SILICON results for models sharing the same architecture.
 
 ```bash
 aiconfigurator cli support --model-path Qwen/Qwen3-32B-FP8 --system h200_sxm
@@ -338,6 +344,58 @@ agg_supported, disagg_supported = cli_support(
 print(f"Agg: {agg_supported}, Disagg: {disagg_supported}")
 ```
 
+### Recommend mode (deployment sizing)
+This mode finds the minimum number of GPUs needed to meet a performance target. It is designed as a procurement sizing tool — the output is unconstrained, suitable for driving purchasing decisions.
+
+Instead of specifying a GPU count (like `default` mode), you specify exactly one load target (request rate or concurrency) along with SLA constraints, and the system calculates the minimum GPUs required.
+
+The recommender searches both tensor-parallel and pipeline-parallel configurations to find the most efficient layout. For models too large to fit on a single node, it automatically escalates to multi-node configurations.
+
+```bash
+aiconfigurator cli recommend --model-path Qwen/Qwen3-32B --system h200_sxm --backend trtllm \
+    --target-request-rate 50 --ttft 2000 --tpot 30 --isl 4000 --osl 1000
+```
+
+or with a concurrency target:
+
+```bash
+aiconfigurator cli recommend --model-path Qwen/Qwen3-32B --system h200_sxm --backend sglang \
+    --target-concurrency 200 --ttft 2000 --tpot 30
+```
+
+**Required arguments:**
+- `--model-path` (alias `--model`): HuggingFace model path or local path containing `config.json`
+- `--system`: System name (GPU type)
+- Exactly one of the following (mutually exclusive):
+  - `--target-request-rate`: Target system request rate in req/s
+  - `--target-concurrency`: Target number of concurrent users
+
+**Optional arguments:**
+- `--backend`: Backend name (`trtllm`, `vllm`, `sglang`, `auto`). Default: `trtllm`
+- `--ttft`, `--tpot`: SLA targets in ms (default: 2000ms, 30ms)
+- `--request-latency`: End-to-end request latency target in ms
+- `--isl`, `--osl`: Input/output sequence lengths (default: 4000, 1000)
+- `--nextn`: MTP draft length, or `auto` to use the checkpoint's `num_nextn_predict_layers`
+- `--nextn-accepted`: Required when the resolved draft depth is greater than 0; it must be a measured average in the range `0 <= nextn_accepted <= nextn`
+- All other arguments match `default` mode (quantization, prefix caching, etc.)
+
+The output includes `total_gpus_needed` and `replicas_needed` columns, showing both agg and disagg configurations ranked by fewest GPUs first.
+
+**Python API equivalent:**
+```python
+from aiconfigurator.cli import cli_recommend
+
+result = cli_recommend(
+    model_path="Qwen/Qwen3-32B",
+    system="h200_sxm",
+    target_request_rate=50.0,
+    ttft=2000,
+    tpot=30,
+)
+for mode, df in result.best_configs.items():
+    print(f"{mode}: {df[['total_gpus_needed', 'replicas_needed', 'tp', 'tpot']].head()}")
+```
+
 ### Default mode
 This mode is triggered by
 ```bash
@@ -345,7 +403,7 @@ aiconfigurator cli default --model-path Qwen/Qwen3-32B-FP8 --total-gpus 32 --sys
 or
 aiconfigurator cli default --model-path Qwen/Qwen3-32B-FP8 --total-gpus 32 --system h200_sxm --ttft 1000 --tpot 10 --isl 3000 --osl 512 --prefix 0
 ```
-`model_path`, `total_gpus`, `system` are three required arguments to define the problem.  
+`model_path`, `total_gpus`, `system` are three required arguments to define the problem.
 If you want to specify your problem with more details, we allow to define `ttft`, `tpot`, `isl`, `osl` and `prefix`.
 
 #### Additional arguments
@@ -364,8 +422,9 @@ Beyond `--ttft`, `--tpot`, `--isl`, `--osl`, and `--prefix`, `default` mode acce
 
 - `--image-height`, `--image-width`: Image dimensions in pixels. Default: `0` (disabled — the request is modeled as text-only).
 - `--num-images`: Number of images per request. Default: `1`.
+- `--disable-encoder-dp`: Model the vision encoder as TP-sharded instead of the default data-parallel. Also available in `estimate` mode (alongside the image flags above).
 
-The SLA, precision, and speculative-decoding flags (`--strict-sla`, `--request-latency`, `--inclusive-tpot`, `--nextn`, `--nextn-accept-rates`, `--database-mode`) have dedicated subsections below. Shared flags such as `--save-dir`, `--top-n`, and `--systems-paths` are described in [Common Arguments](#common-arguments-all-modes).
+The SLA, precision, and speculative-decoding flags (`--strict-sla`, `--request-latency`, `--inclusive-tpot`, `--nextn`, `--nextn-accepted`, `--database-mode`) have dedicated subsections below. Shared flags such as `--save-dir`, `--top-n`, and `--systems-paths` are described in [Common Arguments](#common-arguments-all-modes).
 
 #### Backend Selection
 
@@ -387,6 +446,15 @@ Both agg and disagg results are merged across backends and the globally optimal 
 is selected. This is useful for finding the best backend without running separate commands.
 
 The command will create two experiments for the given problem, one is `agg` and another one is `disagg`. Compare them to find the better one and estimates the perf gain.
+
+#### Spica migration
+
+The experimental Spica smart sweeper has moved to Dynamo's standalone
+[AI Simulate distribution](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/ai-simulate/spica/overview).
+The AIC `--thorough-sweep` and `--thorough-config` flags have been removed. Install
+it from a matching Dynamo checkout with `python -m pip install ./aisimulate`, then run Spica
+through `python -m aisimulate.spica`. Runnable configurations and tools live under
+`examples/aisimulate/spica`.
 
 #### Systems Paths
 
@@ -516,7 +584,7 @@ Each replica has a system of 4 prefill workers and 1 decode workers. Each prefil
 `bs` is required to be set in framework as it limits the largest batch_size of the worker which is crucial to control the TPOT of the deployment.  
 `concurrency` = `concurrency * replicas` Use it to benchmark your deployment on total GPUs. If you only want to benchmark 1 replica, divide it by `replicas`
 
-As this is still a little bit challenging to get the right configs for your deployment, we can further specify `--save-dir DIR` to output all the results here as well as **generate the configs for frameworks automatically**. Here's a stucture of the output folder,
+As this is still a little bit challenging to get the right configs for your deployment, we can further specify `--save-dir DIR` to output all the results here as well as **generate the configs for frameworks automatically**. Here is the output folder structure:
 ```text
 results/Qwen_Qwen3-32B-FP8_h200_sxm_trtllm_isl4000_osl1000_ttft1000_tpot20_904495
 ├── agg
@@ -551,6 +619,7 @@ results/Qwen_Qwen3-32B-FP8_h200_sxm_trtllm_isl4000_osl1000_ttft1000_tpot20_90449
 By default, we output the top 5 configs we have found. You can get the configs and scripts to deploy under each experiment's folder. The generated files depend on your `--deployment-target`:
 - **Dynamo** (default): `k8s_deploy.yaml` for Kubernetes deployment, plus engine configs (`agg_config.yaml`, `prefill_config.yaml`, `decode_config.yaml`) and run scripts (`node_0_run.sh`)
 - **llm-d**: `llm-d-values.yaml` for Helm deployment with the llm-d-modelservice chart
+- **FPM V1**: exactly `k8s_deploy.yaml` (a reusable keepalive Pod or LeaderWorkerSet) and `run.sh` (the complete rank-aware vLLM launch)
 
 For benchmarking, see the [Benchmark Artifacts](#benchmark-artifacts) section below. Refer to [deployment guide](dynamo_deployment_guide.md) for Dynamo deployments or the [README llm-d section](../README.md#deploying-to-llm-d-platform) for llm-d deployments.
 
@@ -559,11 +628,79 @@ For benchmarking, see the [Benchmark Artifacts](#benchmark-artifacts) section be
 **Deployment Target Selection**
 
 Use `--deployment-target` to choose which orchestration platform to deploy to:
-- `dynamo-j2` (default): Generates Dynamo Kubernetes manifests using Jinja2 templates
+- `dynamo-j2` (default): Generates typed Dynamo Kubernetes manifests
 - `dynamo-python`: Generates Dynamo Kubernetes manifests using Dynamo's Python config modifiers (requires `dynamo` package)
-- `llm-d`: Generates Helm values for the llm-d-modelservice chart
+- `llm-d-helm`: Generates Helm values for the llm-d-modelservice chart
+- `llm-d-kustomize`: Generates Kustomize overlays for llm-d modelserver guides
+- `fpm`: Generates a reusable Kubernetes resource workload and a complete FPM launch script, `run.sh`
 
-The backend (`--backend trtllm/vllm/sglang`) and deployment target are orthogonal choices. Note that TRT-LLM only supports Dynamo platforms, while vLLM and SGLang support all three options.
+The backend (`--backend trtllm/vllm/sglang`) and deployment target are generally orthogonal choices. Note that TRT-LLM only supports Dynamo platforms. FPM V1 is the exception: it supports only a vLLM single aggregated-worker topology with exactly one worker replica; that worker may span multiple nodes. Router/planner configurations and invalid FPM topologies fail closed.
+
+#### FPM V1 resource workload and run script
+
+Use `--deployment-target fpm` when a collector or agent should reserve Kubernetes resources and execute generated FPM launches in them. A generator config can add tokenized vLLM arguments, concrete environment variables, and resource-workload overlays:
+
+```yaml
+WorkerConfig:
+  agg_workers: 1
+Workers:
+  agg:
+    extra_cli_args:
+      - --scheduler-cls
+      - InstrumentedScheduler
+      - --benchmark-mode
+      - agg
+      - --dump-config-to
+      - "/results/resolved-config-node{node_rank}.json"
+K8sConfig:
+  fpm_shared_memory_size: 200Gi
+  fpm_resource_labels:
+    fpm.nvidia.com/run-id: glm52-example
+    fpm.nvidia.com/stage: probe
+  worker_extra_pod_spec:
+    mainContainer:
+      resources:
+        requests:
+          memory: 448Gi
+          ephemeral-storage: 30Gi
+  extra_env:
+    - name: FPM_RUN_ID
+      value: glm52-example
+    - name: DYN_FPM_BENCHMARK_OUTPUT_PATH
+      value: /results/glm52-example.json
+```
+
+`Workers.agg.extra_cli_args` must be a `list[str]`, and the final command must include `--benchmark-mode` with one of `agg`, `prefill`, or `decode`. This runtime option selects the FPM collection phase; it does not change the required single aggregated-worker deployment topology. `K8sConfig.extra_env` accepts concrete `{name, value}` entries only; `valueFrom`, `envFrom`, and Secret-derived values are not supported. The normal rule, mapping, and versioned-template pipeline still builds the base command before the extra arguments are appended. If both `--benchmark-output-path` and `DYN_FPM_BENCHMARK_OUTPUT_PATH` are supplied, they must be identical. If neither is supplied, the generator adds `/results/benchmark.json` to both the command and environment.
+
+`K8sConfig.fpm_shared_memory_size` controls the generated `/dev/shm` `emptyDir` limit, while `K8sConfig.fpm_resource_labels` adds labels to the workload and its Pods. Container memory, ephemeral-storage, and other requests or limits can be supplied under `K8sConfig.worker_extra_pod_spec.mainContainer.resources`; the Generator-resolved per-node GPU count cannot be changed there. Matching user-provided `results` or `dshm` volume-and-mount pairs are preserved instead of replaced.
+
+The generated artifact directory contains only:
+
+```text
+artifacts/
+├── k8s_deploy.yaml
+└── run.sh
+```
+
+For a single-node topology, `k8s_deploy.yaml` is a keepalive Pod. For a multinode topology, it is a keepalive `LeaderWorkerSet` whose size and per-node GPU limit come from the resolved topology. Both forms contain the requested image, per-node GPU limit, preserved custom resources, volumes, and mounts, but no engine arguments or engine/FPM environment variables. By default they mount Pod-local `emptyDir` storage at `/results`. `run.sh` contains the environment exports and the complete resolved `python3 -m dynamo.vllm ...` command.
+
+`Workers.agg.gpus_per_worker` is the total GPU count for the one worker replica. When that topology exceeds `NodeConfig.num_gpus_per_node`, the generator emits an LWS and divides the GPU limit across its Pods. The total must divide evenly across the resolved node count, and `TP * PP * DP` must match it. Multinode DP must divide evenly across nodes and uses the `mp` data-parallel backend. The target cluster must have the LeaderWorkerSet API and controller installed before applying a multinode artifact.
+
+For one node, apply the Pod, wait for it to become ready, and stream the script into it:
+
+```bash
+kubectl apply -f artifacts/k8s_deploy.yaml
+kubectl wait --for=condition=Ready pod/<pod> --timeout=10m
+kubectl exec -i <pod> -- bash -s < artifacts/run.sh
+```
+
+For multiple nodes, the collector stages inputs first and then starts the same `run.sh` concurrently on every LWS Pod. The script requires the controller-injected `LWS_WORKER_INDEX` and `LWS_LEADER_ADDRESS` values to add the rank, master, headless, or local-DP arguments required by that node. Multinode values passed to `--dump-config-to` must contain `{node_rank}`; the default is `/results/resolved-config-node{node_rank}.json`. This placeholder applies only to `--dump-config-to`, not to environment values or arbitrary CLI arguments. Callers must not pass Generator-owned orchestration options such as `--nnodes`, `--node-rank`, `--headless`, or `--data-parallel-size-local` in `extra_cli_args`. On multinode runs, leave `DYN_FPM_WORKER_ID` unset so the script derives `<FPM_RUN_ID>-node<N>`, unless the collector supplies a distinct value to each process.
+
+With DP greater than one, DP rank 0 uses the configured benchmark output path and later DP ranks use `_dp<N>` before the extension. Each node waits for all results in its local rank range. Under the current FPM schema-v1 contract, a result counts as complete only when it has `status: complete`, `valid: true`, complete zero-skipped coverage, the requested benchmark mode and point phase, and nested FPM samples for the expected DP rank. For `agg`, result points may be `prefill` or `decode`. The script also accepts the legacy schema-v2 `status: passed` plus `config.dp_rank` result used by earlier Phase 1 collectors. A terminal invalid result stops the script. The collector still owns staging the complete runtime bundle (scheduler code, cases, capacity, run-spec, runtime contracts, and validators) on every Pod, strict schema/metric validation, result download/aggregation/evidence, exit coordination, and cleanup.
+
+Every execution starts a new engine and reloads the model. `run.sh` refuses to overwrite any expected benchmark output, so each run must use new paths. With the default `/results` `emptyDir`, results remain only for the lifetime of the Pod. FPM V1 does not keep the engine or GPU-resident model alive between executions. Selecting any other deployment target preserves the existing generator output and behavior.
+
+The current vLLM template matrix tops out at `0.20.1`. You may pass reference `0.24.0`-only flags through `extra_cli_args`, but the generator has not yet validated those flags against a `0.24.0` runtime image.
 
 **Generator Dynamo version** (applies to Dynamo deployments only)
 - Use `--generator-dynamo-version 0.7.1` to select the Dynamo release. This affects both the generated backend config version and the default K8s image tag.
@@ -768,23 +905,40 @@ exp_hybrid:
 
 Hybrid mode is a quick solution to support new models without modeling the operation and collecting the data. However, please be careful, only `SILICON` mode's result is reproducible. Other modes are for research purpose
 
-#### Speculative Decoding (`--nextn`, `--nextn-accept-rates`)
+#### Speculative Decoding (`--nextn`, `--nextn-accepted`)
 
 These flags enable MTP (Multi-Token Prediction) speculative decoding in the
-configuration search:
+configuration search. MTP is **never enabled implicitly** — omitting `--nextn`
+keeps it off even for models that ship MTP layers (the CLI logs a hint when
+the checkpoint declares them):
 
-- `--nextn N` — Number of draft tokens. When > 0, the sweep includes
-  speculative decoding configurations. Requires the model to support MTP.
-  Default: 0 (disabled).
-- `--nextn-accept-rates RATES` — Comma-separated list of 5 floats representing
-  the acceptance probability of each draft token position. Only the first
-  `--nextn` values are used. Default: `0.85,0.3,0,0,0`.
+- `--nextn N` — MTP draft length (compute cost side: extra MTP-layer forward
+  plus the wider verify batch; no fixed upper bound). Default: 0 (disabled).
+- `--nextn auto` — take the draft depth from the checkpoint's
+  `num_nextn_predict_layers` (absent or 0 keeps MTP disabled). Only the depth
+  comes from the checkpoint — the acceptance value below is still required,
+  because it is a property of your workload, not of the model.
+- `--nextn-accepted A` — Average accepted draft tokens per decode step
+  (`0 <= nextn_accepted <= nextn`); each step yields `1 + nextn_accepted` output tokens.
+  Required whenever the draft depth is > 0 (explicit or via `auto`) — there is
+  no built-in acceptance assumption. Use a measured value from your deployment
+  (e.g. the engine's reported average acceptance length minus 1).
+
+`nextn` is part of the `aic-core` operation and iteration-cost model.
+`nextn_accepted` is a workload assumption applied by the SDK predictor/sweep
+after core timing, so acceptance values can be swept without recompiling or
+rerunning the `aic-core` engine.
 
 Example:
 ```bash
 aiconfigurator cli default \
   --model Qwen/Qwen3-32B-FP8 --total-gpus 8 --system h200_sxm \
-  --nextn 2 --nextn-accept-rates 0.9,0.4,0,0,0
+  --nextn 2 --nextn-accepted 1.2
+
+# Depth from the checkpoint, acceptance from your measurements:
+aiconfigurator cli default \
+  --model deepseek-ai/DeepSeek-V3 --total-gpus 8 --system h200_sxm \
+  --nextn auto --nextn-accepted 0.7
 ```
 
 
@@ -811,7 +965,7 @@ See `src/aiconfigurator/cli/exps/database_mode_comparison.yaml` for an example c
 
 ### Benchmark Artifacts
 
-When `--save-dir` is used, each `topN` directory includes two benchmark helpers alongside the deployment artifacts:
+For non-FPM deployment targets, each `topN` directory includes two benchmark helpers alongside the deployment artifacts when `--save-dir` is used. The FPM target emits only `k8s_deploy.yaml` and `run.sh`, so it does not include these helpers.
 
 - **`bench_run.sh`** -- A shell script for bare-metal benchmarking. It loops over a concurrency array and calls [`aiperf profile`](https://github.com/ai-dynamo/aiperf) for each level. Before running it, make sure the deployed service is reachable at the endpoint printed in the script, and that `aiperf` is installed (`pip install aiperf`). Usage:
   ```bash
@@ -869,9 +1023,11 @@ disagg_full:
   ttft: 1000.0                    # target TTFT in ms (default 1000.0)
   tpot: 40.0                      # target TPOT in ms (default 40.0)
 
-  # Speculative decoding (auto-inferred from HF config if omitted)
+  # Speculative decoding: never enabled implicitly; nextn_accepted is required
+  # when the draft depth is > 0. nextn: auto takes the depth from the
+  # checkpoint's num_nextn_predict_layers (the acceptance value is still yours).
   nextn: 1
-  nextn_accept_rates: [0.85, 0, 0, 0, 0]
+  nextn_accepted: 0.85
 
   # --- Prefill role ---
   prefill_model_path: deepseek-ai/DeepSeek-V3   # required
@@ -927,7 +1083,7 @@ This is long; the basics:
     - `backend_name`: `trtllm` (default), `vllm`, or `sglang`.  
     - `backend_version`, `isl`, `osl`, `ttft`, `tpot`: same meaning as in `default` mode (shared, top-level).  
     - `*_enable_wideep`: enables wide-EP for fine-grained MoE models.  
-    - `nextn` / `nextn_accept_rates`: MTP speculative decoding (auto-inferred from the HF config if omitted).  
+    - `nextn` / `nextn_accepted`: MTP speculative decoding (never auto-enabled; `nextn_accepted` is required when the resolved `nextn > 0`).
     - The replica/correction knobs (`num_gpu_per_replica`, `max_*_workers`, `*_latency_correction`, ...) are covered in [Advanced Tuning](advanced_tuning.md). Typically the only thing you need to touch is the quantization.
 
 Quantization override order: explicit `*_quant_mode` fields take precedence; any mode left unset is filled from the model's HF quantization metadata.
@@ -938,7 +1094,7 @@ disagg_simplified:
   serving_mode: disagg
   total_gpus: 512
   nextn: 2
-  nextn_accept_rates: [0.85, 0.3, 0, 0, 0]
+  nextn_accepted: 1.1
   prefill_model_path: deepseek-ai/DeepSeek-V3
   prefill_system_name: gb200
   prefill_enable_wideep: true        # wide-EP for prefill

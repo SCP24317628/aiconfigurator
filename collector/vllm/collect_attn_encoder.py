@@ -10,7 +10,7 @@ Quant: bf16 only. vLLM upstream supports fp8 ViT FMHA via FLASHINFER;
 enabling that path here is left for the future.
 """
 
-__compat__ = "vllm>=0.21.0"
+__compat__ = "vllm==0.24.0"
 
 import torch
 from vllm.model_executor.models.vision import get_vit_attn_backend
@@ -23,7 +23,7 @@ from vllm.v1.attention.ops.vit_attn_wrappers import (
 )
 from vllm.version import __version__ as vllm_version
 
-from collector.case_generator import get_attention_encoder_shape_sweeps
+from collector.case_generator import get_attention_encoder_head_configs, get_attention_encoder_shape_sweeps
 from collector.helper import benchmark_with_power, log_perf
 
 
@@ -37,19 +37,18 @@ def get_encoder_attention_test_cases():
     for shape_sweep in get_attention_encoder_shape_sweeps("vllm"):
         batch_sizes = _int_list(shape_sweep["batch_sizes"])
         sequence_lengths = _int_list(shape_sweep["sequence_lengths"])
-        head_counts = _int_list(shape_sweep["head_counts"])
-        head_dims = _int_list(shape_sweep["head_dims"])
 
-        for head_dim in head_dims:
-            for n in sorted(head_counts):
-                for s in sorted(sequence_lengths):
-                    for b in sorted(batch_sizes):
-                        # Workload token budget (128K) + 32-bit indexing safety.
-                        if b * s > 131072:
-                            continue
-                        if 4 * b * s * n * head_dim * 2 >= 2**31:
-                            continue
-                        test_cases.append([b, s, n, head_dim])
+        for head_config in get_attention_encoder_head_configs(shape_sweep):
+            n = head_config.num_heads
+            head_dim = head_config.head_dim
+            for s in sorted(sequence_lengths):
+                for b in sorted(batch_sizes):
+                    # Workload token budget (128K) + 32-bit indexing safety.
+                    if b * s > 131072:
+                        continue
+                    if 4 * b * s * n * head_dim * 2 >= 2**31:
+                        continue
+                    test_cases.append([b, s, n, head_dim])
 
     return test_cases
 
@@ -86,6 +85,8 @@ def run_encoder_attention_torch(
 
     if backend == AttentionBackendEnum.FLASH_ATTN:
         fa_version = get_flash_attn_version(head_size=head_dim)
+        if fa_version is None:
+            raise RuntimeError("vLLM selected FlashAttention for ViT without a concrete FA version")
 
         def run():
             vit_flash_attn_wrapper(
@@ -134,6 +135,11 @@ def run_encoder_attention_torch(
     latency = results["latency_ms"]
     print(f"encoder attn latency: {latency}")
 
+    if backend == AttentionBackendEnum.FLASH_ATTN:
+        kernel_source = f"vllm_vit_flash_attn_fa{fa_version}"
+    else:
+        kernel_source = f"vllm_vit_{backend.name}".lower()
+
     log_perf(
         item_list=[
             {
@@ -149,7 +155,7 @@ def run_encoder_attention_torch(
         version=vllm_version,
         device_name=torch.cuda.get_device_name(device),
         op_name="encoder_attention",
-        kernel_source=f"vllm_vit_{backend.name}".lower(),
+        kernel_source=kernel_source,
         perf_filename=perf_filename,
         power_stats=results["power_stats"],
     )

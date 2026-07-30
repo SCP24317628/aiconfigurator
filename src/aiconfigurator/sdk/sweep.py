@@ -30,7 +30,7 @@ Output DataFrame schema is ``common.ColumnsAgg`` for agg and
 
 from __future__ import annotations
 
-import copy
+import dataclasses
 import functools
 import logging
 from typing import Any
@@ -41,10 +41,15 @@ import pandas as pd
 from aiconfigurator.sdk import common, config
 from aiconfigurator.sdk.backends.base_backend import BaseBackend
 from aiconfigurator.sdk.backends.factory import get_backend
-from aiconfigurator.sdk.errors import NoFeasibleConfigError
+from aiconfigurator.sdk.errors import (
+    InsufficientMemoryError,
+    KVCacheCapacityError,
+    NoFeasibleConfigError,
+)
 from aiconfigurator.sdk.models import get_model
 from aiconfigurator.sdk.perf_database import PerfDatabase
 from aiconfigurator.sdk.predict import predict_agg_worker, predict_disagg_worker
+from aiconfigurator.sdk.speculative import SpeculativeDecodingProfile
 from aiconfigurator.sdk.utils import enumerate_ttft_tpot_constraints
 
 logger = logging.getLogger(__name__)
@@ -162,6 +167,7 @@ def _rate_match_dict(
         "(p)dp": p["dp"],
         "(p)moe_tp": p["moe_tp"],
         "(p)moe_ep": p["moe_ep"],
+        "(p)cp": p.get("cp", 1),
         "(p)parallel": p["parallel"],
         "(p)gemm": p["gemm"],
         "(p)kvcache": p["kvcache"],
@@ -260,7 +266,8 @@ def _sweep_one_parallel_agg(
     free_gpu_memory_fraction: float | None,
     max_seq_len: int | None,
     predictor: Any = None,
-) -> tuple[pd.DataFrame, bool]:
+    speculative_profile: SpeculativeDecodingProfile | None = None,
+) -> tuple[pd.DataFrame, bool, bool]:
     """Sweep batch_size x ctx_tokens for one fixed parallel choice.
 
     Caller is responsible for constructing ``model`` and ``backend`` and
@@ -269,23 +276,32 @@ def _sweep_one_parallel_agg(
     a full recomputation per tpot, ~80x slowdown for an 80-element tpot
     sweep.
 
-    Returns ``(rows_df, all_oom)``.  Logic faithfully reproduces the
-    body of the legacy ``backend.find_best_agg_result_under_constraints``;
-    parity is enforced by the integration test.
+    Returns ``(rows_df, saw_model_fit, saw_memory_fit)``.  Logic faithfully
+    reproduces the body of the legacy
+    ``backend.find_best_agg_result_under_constraints``; parity is enforced by
+    the integration test.
     """
     isl = runtime_config.isl
     osl = runtime_config.osl
     ttft_target = runtime_config.ttft
     tpot_target = runtime_config.tpot
-    prefix = runtime_config.prefix
 
     b_list = [b for b in _DEFAULT_AGG_BATCH_SCHEDULE if b <= max_batch_size]
     ctx_tokens_list = _agg_ctx_tokens_list(isl, ctx_stride, enable_chunked_prefill)
 
+    # The capped-gen dedup below assumes the non-speculative schedule
+    # (decode_iterations == osl). With speculative progress the boundary is
+    # fractional and backend schedulers (e.g. vLLM's b - ceil(ctx/isl) decode
+    # requests) still distinguish batches this generic key would merge, so the
+    # heuristic is disabled and every guard-passing point is evaluated.
+    _progress = speculative_profile.tokens_per_iteration if speculative_profile else 1.0
+    dedup_gen_slices = _progress == 1.0
+
     results_dict_list: list[dict] = []
     results_per_ops_source: list[dict | None] = []
     capped_b: list[int] = []
-    all_oom = True
+    saw_model_fit = False
+    saw_memory_fit = False
 
     for b in b_list:
         for ctx_tokens in ctx_tokens_list:
@@ -296,21 +312,19 @@ def _sweep_one_parallel_agg(
                 break
 
             # Skip equivalent gen_tokens slices to avoid recomputing the same point.
-            balance_score = isl * b / ctx_tokens / osl
-            if balance_score > 1:
-                gen_tokens = b // balance_score
-                if gen_tokens > 1 and gen_tokens in capped_b:
-                    continue
-                capped_b.append(gen_tokens)
+            if dedup_gen_slices:
+                balance_score = isl * b / ctx_tokens / osl
+                if balance_score > 1:
+                    gen_tokens = b // balance_score
+                    if gen_tokens > 1 and gen_tokens in capped_b:
+                        continue
+                    capped_b.append(gen_tokens)
 
-            point_rt = config.RuntimeConfig(
-                batch_size=b,
-                isl=isl,
-                osl=osl,
-                prefix=prefix,
-                seq_imbalance_correction_scale=runtime_config.seq_imbalance_correction_scale,
-                engine_step_backend=runtime_config.engine_step_backend,
-            )
+            # dataclasses.replace shallow-copies all fields (including multimodal
+            # fields like image_height/width that field-by-field construction
+            # silently dropped -- NVBug 6401839) and overrides only the named
+            # ones. Safe because the sweep never mutates list-valued fields.
+            point_rt = dataclasses.replace(runtime_config, batch_size=b)
 
             backend_kwargs: dict[str, Any] = {}
             if max_seq_len is not None:
@@ -325,26 +339,30 @@ def _sweep_one_parallel_agg(
                 runtime_config=point_rt,
                 ctx_tokens=ctx_tokens,
                 predictor=predictor,
+                speculative_profile=speculative_profile,
                 **backend_kwargs,
             )
 
-            if summary.check_oom() or summary.check_kv_cache_oom():
+            model_oom = summary.check_oom()
+            kv_cache_oom = summary.check_kv_cache_oom()
+            saw_model_fit |= not model_oom
+            saw_memory_fit |= not model_oom and not kv_cache_oom
+            if model_oom or kv_cache_oom:
                 break  # ctx_tokens monotonic → larger will also OOM
-            all_oom = False
             result_dict = summary.get_result_dict()
             if result_dict and result_dict["tpot"] <= tpot_target and result_dict["ttft"] <= ttft_target:
                 results_dict_list.append(result_dict)
                 results_per_ops_source.append(summary.get_per_ops_source())
 
     if not results_dict_list:
-        return pd.DataFrame(columns=common.ColumnsAgg), all_oom
+        return pd.DataFrame(columns=common.ColumnsAgg), saw_model_fit, saw_memory_fit
 
     df = pd.DataFrame(results_dict_list, columns=common.ColumnsAgg).round(3)
     df["_per_ops_source"] = results_per_ops_source
     df = df.sort_values(by="seq/s", ascending=False).round(3)
     if top_k > 0:
         df = df.head(top_k)
-    return df, all_oom
+    return df, saw_model_fit, saw_memory_fit
 
 
 def sweep_agg(
@@ -354,7 +372,7 @@ def sweep_agg(
     database: PerfDatabase,
     backend_name: str,
     model_config: config.ModelConfig,
-    parallel_config_list: list[list[int]] | list[tuple[int, int, int, int, int]],
+    parallel_config_list: list[list[int]] | list[tuple[int, int, int, int, int, int]],
     top_k: int = 10,
     max_batch_size: int = 512,
     ctx_stride: int = 512,
@@ -362,6 +380,7 @@ def sweep_agg(
     free_gpu_memory_fraction: float | None = None,
     max_seq_len: int | None = None,
     predictor: Any = None,
+    speculative_profile: SpeculativeDecodingProfile | None = None,
 ) -> pd.DataFrame:
     """Sweep parallel x batch x ctx_tokens for agg; return feasible-candidate DataFrame.
 
@@ -385,7 +404,7 @@ def sweep_agg(
         backend_name: Backend name ("trtllm", "vllm", "sglang").
         model_config: Base model config; tp/pp/dp/moe_tp/moe_ep are
             overwritten per parallel candidate during the sweep.
-        parallel_config_list: List of (tp, pp, dp, moe_tp, moe_ep) tuples
+        parallel_config_list: List of (tp, pp, dp, moe_tp, moe_ep, cp) tuples
             to enumerate.
         top_k: Per-(parallel, tpot) top-K rows to keep before concat.
         max_batch_size: Upper bound on batch size sweep.
@@ -398,31 +417,37 @@ def sweep_agg(
         Deduped, sorted feasible-candidate DataFrame with schema ``common.ColumnsAgg``.
 
     Raises:
-        RuntimeError: When all configs OOM or no point meets SLA.
+        InsufficientMemoryError: When the model does not fit in any config.
+        KVCacheCapacityError: When the model fits but the KV cache does not.
         NoFeasibleConfigError: When SLA cannot be satisfied at any point.
+        RuntimeError: When no results are produced and a configuration raises.
     """
     results_df = pd.DataFrame(columns=common.ColumnsAgg)
     exceptions: list[Exception] = []
-    all_configs_oom = True
-    all_kv_cache_oom = True
+    saw_model_fit = False
+    saw_memory_fit = False
 
     for parallel_config in parallel_config_list:
-        tp_size, pp_size, dp_size, moe_tp_size, moe_ep_size = parallel_config
+        tp_size, pp_size, dp_size, moe_tp_size, moe_ep_size, cp_size = parallel_config
         logger.debug(
-            "sweep_agg: parallel tp=%s pp=%s dp=%s moe_tp=%s moe_ep=%s",
+            "sweep_agg: parallel tp=%s pp=%s dp=%s moe_tp=%s moe_ep=%s cp=%s",
             tp_size,
             pp_size,
             dp_size,
             moe_tp_size,
             moe_ep_size,
+            cp_size,
         )
         try:
-            point_model_config = copy.deepcopy(model_config)
-            point_model_config.tp_size = tp_size
-            point_model_config.pp_size = pp_size
-            point_model_config.moe_tp_size = moe_tp_size
-            point_model_config.moe_ep_size = moe_ep_size
-            point_model_config.attention_dp_size = dp_size
+            point_model_config = dataclasses.replace(
+                model_config,
+                tp_size=tp_size,
+                pp_size=pp_size,
+                moe_tp_size=moe_tp_size,
+                moe_ep_size=moe_ep_size,
+                attention_dp_size=dp_size,
+                cp_size=cp_size,
+            )
 
             # Build backend + model ONCE per parallel choice so the backend's
             # internal _agg_cache survives across the tpot sweep below.
@@ -447,22 +472,17 @@ def sweep_agg(
                     )
                     continue
                 for ttft_c, tpot_c in pairs:
-                    rt = copy.deepcopy(runtime_config)
-                    rt.ttft = ttft_c
-                    rt.tpot = tpot_c
-                    runtime_configs_to_evaluate.append(rt)
+                    runtime_configs_to_evaluate.append(dataclasses.replace(runtime_config, ttft=ttft_c, tpot=tpot_c))
             else:
                 tpot_list = runtime_config.tpot if isinstance(runtime_config.tpot, list) else [runtime_config.tpot]
                 for tpot_v in tpot_list:
-                    rt = copy.deepcopy(runtime_config)
-                    rt.tpot = tpot_v
-                    runtime_configs_to_evaluate.append(rt)
+                    runtime_configs_to_evaluate.append(dataclasses.replace(runtime_config, tpot=tpot_v))
 
             if not runtime_configs_to_evaluate:
                 continue
 
             for point_rt in runtime_configs_to_evaluate:
-                point_df, all_oom = _sweep_one_parallel_agg(
+                point_df, point_saw_model_fit, point_saw_memory_fit = _sweep_one_parallel_agg(
                     model=model,
                     backend=backend,
                     database=database,
@@ -474,13 +494,10 @@ def sweep_agg(
                     free_gpu_memory_fraction=free_gpu_memory_fraction,
                     max_seq_len=max_seq_len,
                     predictor=predictor,
+                    speculative_profile=speculative_profile,
                 )
-                if not all_oom:
-                    all_configs_oom = False
-                # KV cache OOM is detected per-summary inside; we conservatively
-                # mark "not all KV cache OOM" whenever we produced any row.
-                if len(point_df) > 0:
-                    all_kv_cache_oom = False
+                saw_model_fit |= point_saw_model_fit
+                saw_memory_fit |= point_saw_memory_fit
                 if len(point_df) == 0:
                     continue
                 if len(results_df) == 0:
@@ -509,13 +526,13 @@ def sweep_agg(
         raise RuntimeError(
             f"sweep_agg: no results for any parallel configuration. Last exception: {exceptions[-1]}"
         ) from exceptions[-1]
-    if all_configs_oom:
-        raise RuntimeError(
+    if not saw_model_fit:
+        raise InsufficientMemoryError(
             "sweep_agg: no results — model does not fit in GPU memory for any parallel config. "
             "Try increasing --total-gpus, using a quantized model, or a system with more VRAM per GPU."
         )
-    if all_kv_cache_oom:
-        raise RuntimeError(
+    if not saw_memory_fit:
+        raise KVCacheCapacityError(
             "sweep_agg: no results — requested batch_size exceeds KV cache capacity for all configs. "
             "Try reducing batch_size, increasing free_gpu_memory_fraction, or a system with more VRAM."
         )
@@ -534,7 +551,7 @@ def _get_disagg_worker_candidates(
     *,
     model_path: str,
     model_config: config.ModelConfig,
-    parallel_config_list: list[tuple[int, int, int, int, int]] | list[list[int]],
+    parallel_config_list: list[tuple[int, int, int, int, int, int]] | list[list[int]],
     b_list: list[int] | range,
     runtime_config: config.RuntimeConfig,
     role: str,
@@ -542,6 +559,8 @@ def _get_disagg_worker_candidates(
     backend_name: str,
     latency_correction: float,
     predictor: Any = None,
+    speculative_profile: SpeculativeDecodingProfile | None = None,
+    free_gpu_memory_fraction: float | None = None,
 ) -> pd.DataFrame:
     """Enumerate (parallel, batch_size) worker candidates for a disagg role.
 
@@ -550,34 +569,37 @@ def _get_disagg_worker_candidates(
     ``DisaggInferenceSession.get_worker_candidates``.
     """
     backend = get_backend(backend_name)
-    summary_df = pd.DataFrame(columns=common.ColumnsStatic)
+    result_rows: list[pd.DataFrame] = []
     exceptions: list[Exception] = []
     all_configs_oom = True
 
     for parallel_config in parallel_config_list:
-        tp_size, pp_size, dp_size, moe_tp_size, moe_ep_size = parallel_config
+        tp_size, pp_size, dp_size, moe_tp_size, moe_ep_size, cp_size = parallel_config
         logger.debug(
-            "sweep_disagg/%s: candidate parallel tp=%s pp=%s dp=%s moe_tp=%s moe_ep=%s",
+            "sweep_disagg/%s: candidate parallel tp=%s pp=%s dp=%s moe_tp=%s moe_ep=%s cp=%s",
             role,
             tp_size,
             pp_size,
             dp_size,
             moe_tp_size,
             moe_ep_size,
+            cp_size,
         )
         try:
-            point_mc = copy.deepcopy(model_config)
-            point_mc.tp_size = tp_size
-            point_mc.pp_size = pp_size
-            point_mc.moe_tp_size = moe_tp_size
-            point_mc.moe_ep_size = moe_ep_size
-            point_mc.attention_dp_size = dp_size
+            point_mc = dataclasses.replace(
+                model_config,
+                tp_size=tp_size,
+                pp_size=pp_size,
+                moe_tp_size=moe_tp_size,
+                moe_ep_size=moe_ep_size,
+                attention_dp_size=dp_size,
+                cp_size=cp_size,
+            )
 
             model = get_model(model_path=model_path, model_config=point_mc, backend_name=backend_name)
 
             for b in b_list:
-                point_rt = copy.deepcopy(runtime_config)
-                point_rt.batch_size = b
+                point_rt = dataclasses.replace(runtime_config, batch_size=b)
                 summary = predict_disagg_worker(
                     model=model,
                     backend=backend,
@@ -586,15 +608,20 @@ def _get_disagg_worker_candidates(
                     role=role,  # type: ignore[arg-type]
                     latency_correction=latency_correction,
                     predictor=predictor,
+                    speculative_profile=speculative_profile,
+                    free_gpu_memory_fraction=free_gpu_memory_fraction,
                 )
-                if not summary.check_oom():
+                if not summary.check_oom() and not summary.check_kv_cache_oom():
                     all_configs_oom = False
-                    summary_df = pd.concat(
-                        [summary_df, summary.get_summary_df()],
-                        axis=0,
-                        ignore_index=True,
-                    )
+                    result_rows.append(summary.get_summary_df())
                 else:
+                    # Larger b will always OOM. check_kv_cache_oom covers the
+                    # fraction-based budget (e.g. vLLM only manages
+                    # gpu_memory_utilization of total memory): a worker whose
+                    # KV for batch b cannot actually be allocated must not
+                    # enter the candidate pool, or the search selects
+                    # deployments whose projected concurrency is physically
+                    # unreachable (#1396).
                     break
         except Exception as e:
             logger.warning(
@@ -610,20 +637,20 @@ def _get_disagg_worker_candidates(
             exceptions.append(e)
             continue
 
-    if summary_df.empty:
+    if not result_rows:
         if exceptions:
             raise RuntimeError(
                 f"sweep_disagg/{role}: no results for any parallel config. Last exception: {exceptions[-1]}"
             ) from exceptions[-1]
         if all_configs_oom:
-            raise RuntimeError(
+            raise InsufficientMemoryError(
                 f"sweep_disagg/{role}: no results — model does not fit in GPU memory for any parallel config. "
                 "Try increasing GPU budget, using a quantized model, or a system with more VRAM per GPU."
             )
         raise NoFeasibleConfigError(
             f"sweep_disagg/{role}: no parallel configuration met TTFT/TPOT or request-latency constraints."
         )
-    return summary_df
+    return pd.concat(result_rows, axis=0, ignore_index=True)
 
 
 def _find_best_disagg_under_constraint(
@@ -734,12 +761,12 @@ def sweep_disagg(
     prefill_database: PerfDatabase,
     prefill_backend_name: str,
     prefill_model_config: config.ModelConfig,
-    prefill_parallel_config_list: list[tuple[int, int, int, int, int]] | list[list[int]],
+    prefill_parallel_config_list: list[tuple[int, int, int, int, int, int]] | list[list[int]],
     prefill_latency_correction: float,
     decode_database: PerfDatabase,
     decode_backend_name: str,
     decode_model_config: config.ModelConfig,
-    decode_parallel_config_list: list[tuple[int, int, int, int, int]] | list[list[int]],
+    decode_parallel_config_list: list[tuple[int, int, int, int, int, int]] | list[list[int]],
     decode_latency_correction: float,
     prefill_max_num_tokens: int = 16384,
     decode_max_num_tokens: int = 512,
@@ -755,6 +782,8 @@ def sweep_disagg(
     rate_matching_decode_degradation: float | None = None,
     autoscale_ttft_correction_factor: float | None = None,
     predictor: Any = None,
+    speculative_profile: SpeculativeDecodingProfile | None = None,
+    free_gpu_memory_fraction: float | None = None,
 ) -> pd.DataFrame:
     """Sweep prefill_parallel x decode_parallel x batches x workers with rate matching.
 
@@ -829,6 +858,8 @@ def sweep_disagg(
         backend_name=prefill_backend_name,
         latency_correction=prefill_latency_correction,
         predictor=predictor,
+        speculative_profile=speculative_profile,
+        free_gpu_memory_fraction=free_gpu_memory_fraction,
     )
     decode_summary_df = _get_disagg_worker_candidates(
         model_path=model_path,
@@ -841,6 +872,8 @@ def sweep_disagg(
         backend_name=decode_backend_name,
         latency_correction=decode_latency_correction,
         predictor=predictor,
+        speculative_profile=speculative_profile,
+        free_gpu_memory_fraction=free_gpu_memory_fraction,
     )
 
     if len(prefill_summary_df) == 0 or len(decode_summary_df) == 0:

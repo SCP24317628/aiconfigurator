@@ -7,11 +7,13 @@ Unit tests for SDK utility functions.
 Tests HuggingFace config parsing and model config retrieval.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from aiconfigurator.sdk import common, config
+from aiconfigurator.sdk.backends.base_backend import BaseBackend
 from aiconfigurator.sdk.models import Gemma4MixModel, HybridMoEModel
 from aiconfigurator.sdk.utils import (
     _parse_hf_config_json,
@@ -632,6 +634,41 @@ class TestGemma4MixModelBuilder:
         model.set_gemma4_config(cfg)
         return model
 
+    @staticmethod
+    def _make_dense_model():
+        """Build a dense Gemma 4 variant (e.g. gemma-4-31B-it: topk=0, num_experts=None):
+        every layer is just shared dense MLP + attention, no routed-MoE block."""
+        layer_types = (["sliding_attention"] * 5 + ["full_attention"]) * 2  # 12 layers
+        cfg = common.Gemma4MixConfig(
+            layer_types=tuple(layer_types),
+            swa_num_kv_heads=16,
+            swa_head_dim=256,
+            global_num_kv_heads=4,
+            global_head_dim=512,
+            sliding_window_size=1024,
+            attention_k_eq_v=True,
+        )
+        model = Gemma4MixModel(
+            0,  # topk = 0 (dense)
+            None,  # num_experts = None (dense)
+            21504,  # moe_inter_size (unused for dense, but kept aligned with HF config)
+            "google/gemma-4-31B-it",
+            "GEMMA4MIX",
+            "Gemma4ForConditionalGeneration",
+            len(layer_types),
+            32,
+            16,
+            256,
+            5376,
+            21504,
+            262144,
+            262144,
+            TestGemma4MixModelBuilder._make_model_config(),  # tp=1, moe_tp=1, moe_ep=1
+            None,
+        )
+        model.set_gemma4_config(cfg)
+        return model
+
     def test_builds_both_layer_recipes(self):
         """30-layer 5:1 SWA:global pattern emits both recipes with shared-MLP + MoE ops."""
         model = self._make_model(self._make_model_config())
@@ -788,35 +825,7 @@ class TestGemma4MixModelBuilder:
 
         Regression test for the assertion crash when num_experts is None.
         """
-        layer_types = (["sliding_attention"] * 5 + ["full_attention"]) * 2  # 12 layers
-        cfg = common.Gemma4MixConfig(
-            layer_types=tuple(layer_types),
-            swa_num_kv_heads=16,
-            swa_head_dim=256,
-            global_num_kv_heads=4,
-            global_head_dim=512,
-            sliding_window_size=1024,
-            attention_k_eq_v=True,
-        )
-        model = Gemma4MixModel(
-            0,  # topk = 0 (dense)
-            None,  # num_experts = None (dense)
-            21504,  # moe_inter_size (unused for dense, but kept aligned with HF config)
-            "google/gemma-4-31B-it",
-            "GEMMA4MIX",
-            "Gemma4ForConditionalGeneration",
-            len(layer_types),
-            32,
-            16,
-            256,
-            5376,
-            21504,
-            262144,
-            262144,
-            self._make_model_config(),  # tp=1, moe_tp=1, moe_ep=1
-            None,
-        )
-        model.set_gemma4_config(cfg)
+        model = self._make_dense_model()
 
         op_names = {op._name for op in model.context_ops}
         # Shared dense MLP ops MUST be present.
@@ -829,6 +838,31 @@ class TestGemma4MixModelBuilder:
         )
         gen_names = {op._name for op in model.generation_ops}
         assert not any("moe" in n.lower() or "router" in n.lower() for n in gen_names)
+
+    def test_dense_variant_memory_usage_no_crash(self):
+        """Dense Gemma 4 (num_experts=None) must flow through _get_memory_usage without
+        crashing on the missing MoE workspace; activations fall back to MIN_ACTIVATION_BYTES."""
+        model = self._make_dense_model()
+
+        database = SimpleNamespace(
+            system_spec={
+                "misc": {
+                    "nccl_mem": {1: 0},
+                    "other_mem": 0,
+                }
+            }
+        )
+        memory = BaseBackend()._get_memory_usage(
+            model,
+            database,
+            batch_size=1,
+            beam_width=1,
+            isl=1,
+            osl=1,
+        )
+
+        assert memory["activations"] == pytest.approx(BaseBackend.MIN_ACTIVATION_BYTES / (1 << 30))
+        assert memory["total"] > 0
 
     def test_dense_variant_rejects_moe_ep_gt_1(self):
         """Dense Gemma 4 has no experts, so any moe_ep_size > 1 must be rejected
@@ -1208,6 +1242,84 @@ class TestParseCompressedTensorsQuant:
         assert overrides.get("gemm_quant_mode") == common.GEMMQuantMode.int4_wo
         assert overrides.get("moe_quant_mode") == common.MoEQuantMode.int4_wo
 
+    def test_modelopt_mixed_precision_config_groups_map_sdk_modes(self):
+        """ModelOpt MIXED_PRECISION config groups map FP8 dense layers and NVFP4 routed experts."""
+        from aiconfigurator.sdk import common
+        from aiconfigurator.sdk.models import _infer_quant_modes_from_raw_config
+        from aiconfigurator.sdk.utils import _attach_inferred_quant_fields
+
+        raw_config = _attach_inferred_quant_fields(
+            {
+                "quantization_config": {
+                    "quant_algo": "MIXED_PRECISION",
+                    "kv_cache_scheme": {"type": "float", "num_bits": 8},
+                    "config_groups": {
+                        "group_0": {
+                            "weights": {"dynamic": False, "num_bits": 8, "type": "float"},
+                            "input_activations": {"dynamic": False, "num_bits": 8, "type": "float"},
+                            "targets": [
+                                "backbone.layers.0.mixer.in_proj",
+                                "backbone.layers.1.mixer.shared_experts.up_proj",
+                            ],
+                        },
+                        "group_1": {
+                            "weights": {
+                                "dynamic": False,
+                                "group_size": 16,
+                                "num_bits": 4,
+                                "type": "float",
+                            },
+                            "input_activations": {
+                                "dynamic": False,
+                                "group_size": 16,
+                                "num_bits": 4,
+                                "type": "float",
+                            },
+                            "targets": ["backbone.layers.1.mixer.experts.0.up_proj"],
+                        },
+                    },
+                },
+            }
+        )
+
+        overrides = _infer_quant_modes_from_raw_config(raw_config)
+
+        assert raw_config["quant_algo"] == "mixed_precision"
+        assert overrides["gemm_quant_mode"] == common.GEMMQuantMode.fp8_static
+        assert overrides["moe_quant_mode"] == common.MoEQuantMode.nvfp4
+        assert overrides["kvcache_quant_mode"] == common.KVCacheQuantMode.fp8
+        assert overrides["fmha_quant_mode"] == common.FMHAQuantMode.fp8
+
+    def test_modelopt_mixed_precision_hf_quant_layers_map_sdk_modes(self):
+        """Standalone hf_quant_config.json MIXED_PRECISION metadata no longer raises unsupported quant_algo."""
+        from aiconfigurator.sdk import common
+        from aiconfigurator.sdk.models import _infer_quant_modes_from_raw_config
+        from aiconfigurator.sdk.utils import _attach_inferred_quant_fields
+
+        raw_config = _attach_inferred_quant_fields(
+            {
+                "hf_quant_config": {
+                    "quantization": {
+                        "quant_algo": "MIXED_PRECISION",
+                        "kv_cache_quant_algo": "FP8",
+                        "quantized_layers": {
+                            "backbone.layers.0.mixer.in_proj": {"quant_algo": "FP8"},
+                            "backbone.layers.1.mixer.shared_experts.up_proj": {"quant_algo": "FP8"},
+                            "backbone.layers.1.mixer.experts.0.up_proj": {"quant_algo": "NVFP4"},
+                        },
+                    }
+                },
+            }
+        )
+
+        overrides = _infer_quant_modes_from_raw_config(raw_config)
+
+        assert raw_config["quant_algo"] == "mixed_precision"
+        assert overrides["gemm_quant_mode"] == common.GEMMQuantMode.fp8_static
+        assert overrides["moe_quant_mode"] == common.MoEQuantMode.nvfp4
+        assert overrides["kvcache_quant_mode"] == common.KVCacheQuantMode.fp8
+        assert overrides["fmha_quant_mode"] == common.FMHAQuantMode.fp8
+
     def test_expert_dtype_fp4_is_deepseek_v4_specific(self):
         from aiconfigurator.sdk import common
         from aiconfigurator.sdk.models import _infer_quant_modes_from_raw_config
@@ -1323,7 +1435,7 @@ class TestEnumerateParallelConfigVLLMMoE:
         )
         assert len(configs) > 0, "Should generate at least one config"
         for c in configs:
-            tp, pp, dp, moe_tp, moe_ep = c
+            tp, pp, dp, moe_tp, moe_ep, cp = c
             assert not (moe_tp > 1 and moe_ep > 1), f"vLLM should not have both moe_tp > 1 and moe_ep > 1, got {c}"
 
     def test_vllm_allows_pure_moe_tp(self):

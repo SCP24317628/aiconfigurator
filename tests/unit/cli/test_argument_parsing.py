@@ -17,8 +17,8 @@ pytestmark = pytest.mark.unit
 class TestCLIArgumentParsing:
     """Test CLI argument parsing and validation."""
 
-    def test_default_mode_required_args(self, cli_parser):
-        """Test that configure_parser creates a valid argument parser."""
+    def test_default_mode_core_args_are_required(self, cli_parser):
+        """Default mode requires model and system; total_gpus is optional when a load target is provided."""
         subparsers = [action for action in cli_parser._actions if action.dest == "mode"]
         assert len(subparsers) == 1
 
@@ -29,8 +29,9 @@ class TestCLIArgumentParsing:
         required_args = [action.dest for action in required_actions]
 
         assert "model_path" in required_args
-        assert "total_gpus" in required_args
         assert "system" in required_args
+        # total_gpus is optional -- omitting it with a load target triggers recommend
+        assert "total_gpus" not in required_args
 
     def test_exp_mode_required_args(self, cli_parser):
         """Test that exp mode requires the yaml_path argument."""
@@ -48,7 +49,7 @@ class TestCLIArgumentParsing:
     def test_mode_choices(self, cli_parser):
         """Ensure supported CLI modes are exposed."""
         action = next(action for action in cli_parser._actions if action.dest == "mode")
-        assert set(action.choices.keys()) == {"default", "exp", "generate", "support", "estimate"}
+        assert set(action.choices.keys()) == {"default", "exp", "generate", "support", "estimate", "recommend"}
 
     def test_generate_mode_required_args(self, cli_parser):
         """Test that generate mode requires the correct arguments."""
@@ -107,7 +108,7 @@ class TestCLIArgumentParsing:
         assert args.backend == common.BackendName.trtllm.value
         assert args.backend_version is None
         assert args.database_mode == common.DatabaseMode.SILICON.name
-        assert args.debug is False
+        assert args.log_level is None
         assert args.decode_system is None
         assert args.generated_config_version is None
         assert args.generator_dynamo_version is None
@@ -121,6 +122,34 @@ class TestCLIArgumentParsing:
         assert args.prefix == 0
         assert args.engine_step_backend is None
 
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [
+            ("--thorough-sweep", None),
+            ("--thorough-config", "/tmp/spica.yaml"),
+            ("--trace-path", "/tmp/traffic.jsonl"),
+            ("--trace-sweep-rounds", "5"),
+            ("--trace-parallel-evals", "5"),
+        ],
+    )
+    def test_removed_spica_flags_are_rejected(self, cli_parser, flag, value):
+        """The AIC CLI no longer exposes Spica or its trace-sweep controls."""
+        argv = [
+            "default",
+            "--model-path",
+            "Qwen/Qwen3-32B",
+            "--total-gpus",
+            "8",
+            "--system",
+            "h200_sxm",
+            flag,
+        ]
+        if value is not None:
+            argv.append(value)
+
+        with pytest.raises(SystemExit):
+            cli_parser.parse_args(argv)
+
     def test_inclusive_tpot_default_false_in_exp_mode(self, cli_parser, mock_exp_yaml_path):
         """--inclusive-tpot defaults to False in exp mode."""
         args = cli_parser.parse_args(["exp", "--yaml-path", str(mock_exp_yaml_path)])
@@ -131,8 +160,26 @@ class TestCLIArgumentParsing:
         args = cli_parser.parse_args(["exp", "--yaml-path", str(mock_exp_yaml_path), "--inclusive-tpot"])
         assert args.inclusive_tpot is True
 
-    def test_debug_mode_flag(self, cli_parser):
-        """Test that debug mode can be enabled."""
+    def test_log_level_flag(self, cli_parser):
+        """Test that --log-level is parsed and normalized."""
+        args = cli_parser.parse_args(
+            [
+                "default",
+                "--model-path",
+                "Qwen/Qwen3-32B",
+                "--total-gpus",
+                "8",
+                "--system",
+                "h200_sxm",
+                "--log-level",
+                "debug",
+            ]
+        )
+
+        assert args.log_level == "DEBUG"
+
+    def test_legacy_debug_flag(self, cli_parser):
+        """Legacy --debug is still accepted for backward compatibility."""
         args = cli_parser.parse_args(
             [
                 "default",
@@ -215,6 +262,85 @@ class TestCLIArgumentParsing:
         param_value = getattr(args, optional_param)
         assert isinstance(param_value, expected_type)
         assert param_value == expected_type(value)
+
+    def test_nextn_accepts_auto(self, cli_parser):
+        """--nextn auto is a literal pass-through; resolution against the
+        checkpoint happens later, once the model config is loaded."""
+        args = cli_parser.parse_args(
+            [
+                "default",
+                "--model-path",
+                "deepseek-ai/DeepSeek-V3",
+                "--total-gpus",
+                "8",
+                "--system",
+                "h200_sxm",
+                "--nextn",
+                "auto",
+                "--nextn-accepted",
+                "0.7",
+            ]
+        )
+        assert args.nextn == "auto"
+
+    def test_nextn_requires_explicit_acceptance(self, cli_parser):
+        from aiconfigurator.cli.main import _resolve_and_validate_nextn
+
+        args = cli_parser.parse_args(
+            [
+                "default",
+                "--model-path",
+                "Qwen/Qwen3-32B",
+                "--total-gpus",
+                "8",
+                "--system",
+                "h200_sxm",
+                "--nextn",
+                "2",
+            ]
+        )
+
+        with pytest.raises(SystemExit, match="nextn_accepted"):
+            _resolve_and_validate_nextn(args)
+
+    def test_nextn_auto_requires_explicit_acceptance_when_resolved_positive(self, cli_parser, monkeypatch):
+        import aiconfigurator.cli.main as cli_main
+
+        args = cli_parser.parse_args(
+            [
+                "default",
+                "--model-path",
+                "Qwen/Qwen3-32B",
+                "--total-gpus",
+                "8",
+                "--system",
+                "h200_sxm",
+                "--nextn",
+                "auto",
+            ]
+        )
+        monkeypatch.setattr(cli_main, "resolve_nextn_auto", lambda _model_path: 2)
+
+        with pytest.raises(SystemExit, match=r"resolved to nextn=2.*nextn_accepted"):
+            cli_main._resolve_and_validate_nextn(args)
+
+    @pytest.mark.parametrize("bad_value", ["-1", "1.5", "always", ""])
+    def test_nextn_rejects_non_auto_junk(self, cli_parser, bad_value):
+        """--nextn takes a non-negative integer or the literal 'auto'."""
+        with pytest.raises(SystemExit):
+            cli_parser.parse_args(
+                [
+                    "default",
+                    "--model-path",
+                    "Qwen/Qwen3-32B",
+                    "--total-gpus",
+                    "8",
+                    "--system",
+                    "h200_sxm",
+                    "--nextn",
+                    bad_value,
+                ]
+            )
 
     def test_decode_system_defaults_to_system(self, cli_parser):
         """Decode system defaults to system when omitted and can be overridden."""
@@ -299,50 +425,182 @@ class TestCLIArgumentParsing:
         expected_choices = [mode.name for mode in common.DatabaseMode if mode != common.DatabaseMode.SOL_FULL]
         assert sorted(action.choices) == sorted(expected_choices)
 
-    def test_nextn_default_value(self, cli_parser):
-        """Test that --nextn defaults to 0."""
-        args = cli_parser.parse_args(
-            ["default", "--model-path", "Qwen/Qwen3-32B", "--total-gpus", "8", "--system", "h200_sxm"]
-        )
-        assert args.nextn == 0
+    def test_disable_encoder_dp_flag(self, cli_parser):
+        """--disable-encoder-dp exists on default and estimate modes, default off (encoder DP on)."""
+        common_args = ["--model-path", "Qwen/Qwen3-VL-32B-Instruct", "--system", "h200_sxm"]
+        args = cli_parser.parse_args(["default", "--total-gpus", "8", *common_args])
+        assert args.disable_encoder_dp is False
+        args = cli_parser.parse_args(["default", "--total-gpus", "8", *common_args, "--disable-encoder-dp"])
+        assert args.disable_encoder_dp is True
+        args = cli_parser.parse_args(["estimate", *common_args])
+        assert args.disable_encoder_dp is False
+        args = cli_parser.parse_args(["estimate", *common_args, "--disable-encoder-dp"])
+        assert args.disable_encoder_dp is True
 
-    def test_nextn_accept_rates_default_value(self, cli_parser):
-        """Test that --nextn-accept-rates defaults to '0.85,0.3,0,0,0'."""
-        args = cli_parser.parse_args(
-            ["default", "--model-path", "Qwen/Qwen3-32B", "--total-gpus", "8", "--system", "h200_sxm"]
-        )
-        assert args.nextn_accept_rates == "0.85,0.3,0,0,0"
-
-    def test_nextn_can_be_set(self, cli_parser):
-        """Test that --nextn can be set to a custom value."""
+    def test_recommend_mode_parses_request_rate(self, cli_parser):
         args = cli_parser.parse_args(
             [
-                "default",
+                "recommend",
                 "--model-path",
                 "Qwen/Qwen3-32B",
-                "--total-gpus",
-                "8",
                 "--system",
                 "h200_sxm",
+                "--target-request-rate",
+                "50.0",
+            ]
+        )
+        assert args.mode == "recommend"
+        assert args.target_request_rate == 50.0
+        assert args.target_concurrency is None
+
+    def test_recommend_mode_parses_concurrency(self, cli_parser):
+        args = cli_parser.parse_args(
+            [
+                "recommend",
+                "--model-path",
+                "Qwen/Qwen3-32B",
+                "--system",
+                "h200_sxm",
+                "--target-concurrency",
+                "200",
+            ]
+        )
+        assert args.mode == "recommend"
+        assert args.target_request_rate is None
+        assert args.target_concurrency == 200.0
+
+    def test_recommend_mode_rejects_both_targets(self, cli_parser):
+        with pytest.raises(SystemExit):
+            cli_parser.parse_args(
+                [
+                    "recommend",
+                    "--model-path",
+                    "Qwen/Qwen3-32B",
+                    "--system",
+                    "h200_sxm",
+                    "--target-request-rate",
+                    "50.0",
+                    "--target-concurrency",
+                    "200",
+                ]
+            )
+
+    def test_recommend_mode_requires_a_target(self, cli_parser):
+        with pytest.raises(SystemExit):
+            cli_parser.parse_args(
+                [
+                    "recommend",
+                    "--model-path",
+                    "Qwen/Qwen3-32B",
+                    "--system",
+                    "h200_sxm",
+                ]
+            )
+
+    def test_recommend_mode_has_no_total_gpus(self, cli_parser):
+        args = cli_parser.parse_args(
+            [
+                "recommend",
+                "--model-path",
+                "Qwen/Qwen3-32B",
+                "--system",
+                "h200_sxm",
+                "--target-request-rate",
+                "10",
+            ]
+        )
+        assert not hasattr(args, "total_gpus")
+
+    def test_recommend_nextn_auto_resolves_and_validates(self, cli_parser, monkeypatch):
+        import aiconfigurator.cli.main as cli_main
+
+        args = cli_parser.parse_args(
+            [
+                "recommend",
+                "--model-path",
+                "deepseek-ai/DeepSeek-V3",
+                "--system",
+                "h200_sxm",
+                "--target-request-rate",
+                "10",
                 "--nextn",
-                "3",
+                "auto",
+                "--nextn-accepted",
+                "0.7",
             ]
         )
-        assert args.nextn == 3
+        monkeypatch.setattr(cli_main, "resolve_nextn_auto", lambda _model_path: 2)
 
-    def test_nextn_accept_rates_can_be_set(self, cli_parser):
-        """Test that --nextn-accept-rates can be set to custom values."""
+        cli_main._resolve_and_validate_nextn(args)
+
+        assert args.nextn == 2
+        assert args.nextn_accepted == 0.7
+
+    def test_recommend_nextn_requires_explicit_acceptance(self, cli_parser):
+        from aiconfigurator.cli.main import _resolve_and_validate_nextn
+
         args = cli_parser.parse_args(
             [
-                "default",
+                "recommend",
                 "--model-path",
                 "Qwen/Qwen3-32B",
-                "--total-gpus",
-                "8",
                 "--system",
                 "h200_sxm",
-                "--nextn-accept-rates",
-                "0.9,0.5,0.2,0.1,0",
+                "--target-request-rate",
+                "10",
+                "--nextn",
+                "2",
             ]
         )
-        assert args.nextn_accept_rates == "0.9,0.5,0.2,0.1,0"
+
+        with pytest.raises(SystemExit, match="nextn_accepted"):
+            _resolve_and_validate_nextn(args)
+
+    @pytest.mark.parametrize("accepted", ["-0.1", "2.1", "nan", "inf", "-inf"])
+    def test_recommend_nextn_rejects_out_of_range_or_non_finite_acceptance(self, cli_parser, accepted):
+        from aiconfigurator.cli.main import _resolve_and_validate_nextn
+
+        args = cli_parser.parse_args(
+            [
+                "recommend",
+                "--model-path",
+                "Qwen/Qwen3-32B",
+                "--system",
+                "h200_sxm",
+                "--target-request-rate",
+                "10",
+                "--nextn",
+                "2",
+                f"--nextn-accepted={accepted}",
+            ]
+        )
+
+        with pytest.raises(SystemExit, match="nextn_accepted"):
+            _resolve_and_validate_nextn(args)
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [
+            ("--target-request-rate", "0"),
+            ("--target-request-rate", "-1"),
+            ("--target-request-rate", "nan"),
+            ("--target-request-rate", "inf"),
+            ("--target-concurrency", "0"),
+            ("--target-concurrency", "-1"),
+            ("--target-concurrency", "nan"),
+            ("--target-concurrency", "inf"),
+        ],
+    )
+    def test_recommend_mode_rejects_non_positive_target(self, cli_parser, flag, value):
+        with pytest.raises(SystemExit):
+            cli_parser.parse_args(
+                [
+                    "recommend",
+                    "--model-path",
+                    "Qwen/Qwen3-32B",
+                    "--system",
+                    "h200_sxm",
+                    flag,
+                    value,
+                ]
+            )

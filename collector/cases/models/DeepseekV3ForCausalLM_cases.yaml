@@ -9,25 +9,65 @@ model_paths:
   - deepseek-ai/DeepSeek-V3
   - nvidia/DeepSeek-V3.1-NVFP4
 include_base: true
+base_ops:
+  - gemm
 description: >
   DeepSeek-V3-family model-centric collection plan. Includes shared base op cases
-  plus MoE, MLA, and DeepSeek-V3 WideEP cases.
+  plus stock MoE and MLA cases. WideEP requires a separate runtime and must be
+  requested independently.
 
 model_case_values:
   moe:
-    - model_paths:
+    - model_path: deepseek-ai/DeepSeek-V3
+      model_aliases:
         - deepseek-ai/DeepSeek-R1
-        - deepseek-ai/DeepSeek-V3
-        - nvidia/DeepSeek-V3.1-NVFP4
+        - deepseek-ai/DeepSeek-V3.2
       hidden_size: 7168
       inter_size: 2048
       topk: 8
       num_experts: 256
+      sglang_moe_scoring_func: sigmoid
+      sglang_moe_routing_method_type: DeepSeekV3
+      sglang_moe_routed_scaling_factor: 2.5
+      sglang_moe_renormalize: true
+      sglang_moe_has_correction_bias: true
+      sglang_moe_num_expert_group: 8
+      sglang_moe_topk_group: 4
+      sglang_moe_backends:
+        bfloat16: {100: flashinfer_trtllm, 103: flashinfer_trtllm}
+        fp8_block: {100: flashinfer_trtllm, 103: flashinfer_trtllm}
       wideep: true
+      framework_quantization:
+        sglang:
+          allowed_modes: [fp8_block]
+        trtllm:
+          allowed_modes: [fp8_block]
+        vllm:
+          allowed_modes: [fp8_block]
+    - model_path: nvidia/DeepSeek-V3.1-NVFP4
+      hidden_size: 7168
+      inter_size: 2048
+      topk: 8
+      num_experts: 256
+      sglang_moe_scoring_func: sigmoid
+      sglang_moe_routing_method_type: DeepSeekV3
+      sglang_moe_routed_scaling_factor: 2.5
+      sglang_moe_renormalize: true
+      sglang_moe_has_correction_bias: true
+      sglang_moe_num_expert_group: 8
+      sglang_moe_topk_group: 4
+      wideep: true
+      framework_quantization:
+        sglang:
+          allowed_modes: [nvfp4]
+        trtllm:
+          allowed_modes: [nvfp4]
+        vllm:
+          allowed_modes: [nvfp4]
   mla:
-    - model_paths:
+    - model_path: deepseek-ai/DeepSeek-V3
+      model_aliases:
         - deepseek-ai/DeepSeek-R1
-        - deepseek-ai/DeepSeek-V3
         - nvidia/DeepSeek-V3.1-NVFP4
       num_heads: 128
       q_lora_rank: 1536
@@ -36,9 +76,12 @@ model_case_values:
       qk_rope_head_dim: 64
       v_head_dim: 128
   mla_module:
+    # Module collectors load checkpoint-specific quantization metadata. Keep
+    # every native-precision artifact available; operation-local deduplication
+    # may collapse only cases whose explicit precision key is already equal.
     - model_paths:
-        - deepseek-ai/DeepSeek-R1
         - deepseek-ai/DeepSeek-V3
+        - deepseek-ai/DeepSeek-R1
         - nvidia/DeepSeek-V3.1-NVFP4
       attention_type: mla
       native_num_heads: 128
@@ -47,17 +90,17 @@ model_case_values:
 all_frameworks_op_cases:
   moe:
     cases: all
-  mla_context:
-    cases: all
-  mla_generation:
-    cases: all
-  mla_bmm_gen_pre:
-    cases: all
-  mla_bmm_gen_post:
-    cases: all
 
 framework_specific_op_cases:
   trtllm:
+    mla_context:
+      cases: all
+    mla_generation:
+      cases: all
+    mla_bmm_gen_pre:
+      cases: all
+    mla_bmm_gen_post:
+      cases: all
     mla_context_module:
       cases: all
     mla_generation_module:
@@ -70,9 +113,11 @@ framework_specific_op_cases:
     mla_generation_module:
       cases: all
   sglang:
-    wideep_mla_context:
+    mla_context:
       cases: all
-    wideep_mla_generation:
+    mla_generation:
       cases: all
-    wideep_moe:
+    mla_bmm_gen_pre:
+      cases: all
+    mla_bmm_gen_post:
       cases: all

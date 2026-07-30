@@ -1,3 +1,10 @@
+---
+description: >
+  Coordinated changes for adding a new backend engine version to the generator.
+paths:
+  - "src/aiconfigurator/generator/**"
+---
+
 # Adding a New Backend Version Reference
 
 Adding a new backend version is one of the most frequent generator tasks. It involves
@@ -47,8 +54,11 @@ Only create new version templates if the backend CLI interface changed.
 1. Identify which artifact templates need new versions:
    - `cli_args.j2` -- if CLI flags changed
    - `extra_engine_args.yaml.j2` -- if engine config format changed (TRT-LLM)
-   - `k8s_deploy.yaml.j2` -- usually version-independent
    - `run.sh.j2` -- if startup command changed
+   - k8s deploy is NOT a template: it is produced by the typed builder
+     (`builders/k8s_builder.py` + `dgd_model.py`), and is usually
+     version-independent. Changing k8s output means editing the builder.
+     See `render_path_policy.md`.
 
 2. Copy the closest prior version template:
    ```bash

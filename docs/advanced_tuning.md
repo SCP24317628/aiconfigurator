@@ -19,7 +19,7 @@ aiconfigurator cli default --model-path Qwen/Qwen3-32B-FP8 --total-gpus 512 --sy
 We hide a lot of default settings of the execution. Such as the quantization of each component, the matrix multiply, attention, moe, etc. We  
 also hide the parallel config for how we search possible combinations.  
 
-The optional params of cli contains the definition of ISL, OSL, TTFT and TPOT while we don't cover these params mentioned above. In CLI, We auto populate all these stuff for `default` mode and allow users to modify in `exp` mode. Since webapp follows the same logic, we take CLI as an example,
+The optional params of cli contains the definition of ISL, OSL, TTFT and TPOT while we don't cover these params mentioned above. In CLI, We auto populate all these stuff for `default` mode and allow users to modify in `exp` mode.
 ```bash
 aiconfigurator cli exp --yaml-path example.yaml
 ```
@@ -38,9 +38,10 @@ agg_full:
   ttft: 1000.0
   tpot: 40.0
   enable_wideep: false
-  # Speculative decoding (MTP)
+  # Speculative decoding (MTP): opt-in only; nextn_accepted is required
+  # when nextn > 0 and must lie in [0, nextn].
   nextn: 1
-  nextn_accept_rates: [0.85, 0, 0, 0, 0]
+  nextn_accepted: 0.85
   # Quantization of each component (default: inferred from HF config)
   gemm_quant_mode: fp8_block           # fp8 | fp8_block | bfloat16
   moe_quant_mode: fp8_block            # fp8 | fp8_block | w4afp8 | bfloat16
@@ -63,8 +64,9 @@ disagg_full:
   osl: 1000
   ttft: 1000.0
   tpot: 40.0
+  # MTP is opt-in; nextn_accepted required when nextn > 0, in [0, nextn].
   nextn: 1
-  nextn_accept_rates: [0.85, 0, 0, 0, 0]
+  nextn_accepted: 0.85
 
   # --- Prefill worker ---
   prefill_model_path: deepseek-ai/DeepSeek-V3
@@ -155,9 +157,6 @@ And for prefill, for typical ISL larger than 1000, it's almost saturating the co
 
 ## agg config
 It's same for agg. You can treat agg as a prefill or decode worker.
-
-## webapp
-Webapp is actually a UI for these stuff. The logics are the same. They're building upon the same sdk.
 
 ## Practical suggestion
 In order to save search time, you need to reduce the search space by choosing fewer parallel options. Say for `*_num_gpu_candidates` here, it's DeepSeek V3 with 671B model 

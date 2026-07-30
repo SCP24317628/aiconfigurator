@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import pandas as pd
 import pytest
 
+from aiconfigurator.sdk.errors import PerfDataNotAvailableError
 from tools.support_matrix import support_matrix as support_matrix_module
 from tools.support_matrix.support_matrix import (
     STATUS_FAIL,
     STATUS_FRAMEWORK_INCOMPATIBLE,
     STATUS_HW_INCOMPATIBLE,
+    STATUS_HYBRID_PASS,
     SupportMatrix,
     TestConstraints,
 )
@@ -15,12 +18,31 @@ from tools.support_matrix.support_matrix import (
 pytestmark = pytest.mark.unit
 
 
+_SYSTEM_SM_VERSIONS = {
+    "b200_sxm": 100,
+    "gb200": 100,
+    "b300_sxm": 103,
+    "gb300": 103,
+    "h200_sxm": 90,
+    "l40s": 89,
+    "rtx_pro_6000_server": 120,
+}
+
+
+def _system_spec(system: str) -> dict:
+    sm_version = _SYSTEM_SM_VERSIONS[system]
+    gpu = {"sm_version": sm_version, "fp8_tc_flops": 1}
+    if sm_version >= 100:
+        gpu["fp4_tc_flops"] = 1
+    return {"gpu": gpu}
+
+
 def _b200_system_spec() -> dict:
-    return {"gpu": {"sm_version": 100, "fp8_tc_flops": 1, "fp4_tc_flops": 1}}
+    return _system_spec("b200_sxm")
 
 
 def _l40s_system_spec() -> dict:
-    return {"gpu": {"sm_version": 89, "fp8_tc_flops": 1}}
+    return _system_spec("l40s")
 
 
 def _patch_large_constraints(monkeypatch) -> None:
@@ -45,7 +67,7 @@ def test_dsv4_vllm_019_unsupported_mxfp8_quant_is_framework_incompatible(monkeyp
         system="b300_sxm",
         backend="vllm",
         version="0.19.0",
-        system_spec=_b200_system_spec(),
+        system_spec=_system_spec("b300_sxm"),
     )
 
     assert statuses == {"agg": STATUS_FRAMEWORK_INCOMPATIBLE, "disagg": STATUS_FRAMEWORK_INCOMPATIBLE}
@@ -54,7 +76,7 @@ def test_dsv4_vllm_019_unsupported_mxfp8_quant_is_framework_incompatible(monkeyp
 
 def test_dsv4_vllm_019_missing_mhc_data_is_framework_incompatible(monkeypatch):
     def fake_run_mode(**_kwargs):
-        raise RuntimeError(
+        raise PerfDataNotAvailableError(
             "No results found for any parallel configuration. Showing last exception: "
             "DeepSeek-V4 mHC module data not loaded for system='b200_sxm', "
             "backend='vllm', version='0.19.0'."
@@ -73,6 +95,76 @@ def test_dsv4_vllm_019_missing_mhc_data_is_framework_incompatible(monkeypatch):
 
     assert statuses == {"agg": STATUS_FRAMEWORK_INCOMPATIBLE, "disagg": STATUS_FRAMEWORK_INCOMPATIBLE}
     assert "DeepSeek-V4 mHC module data not loaded" in errors["disagg"]
+
+
+@pytest.mark.parametrize("system", ["b200_sxm", "b300_sxm", "gb200", "gb300"])
+@pytest.mark.parametrize("version", ["0.24.0", "0.25.0"])
+@pytest.mark.parametrize(
+    ("error_message", "error_type"),
+    [
+        ("Unsupported moe quant mode 'w4a8_mxfp4_mxfp8'", ValueError),
+        ("DeepSeek-V4 mHC module data not loaded", PerfDataNotAvailableError),
+    ],
+)
+def test_dsv4_vllm_024_plus_native_blackwell_gap_is_fail(monkeypatch, system, version, error_message, error_type):
+    attempts = 0
+
+    def fake_run_mode(**_kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise error_type(error_message)
+
+    monkeypatch.setattr(SupportMatrix, "_run_mode", staticmethod(fake_run_mode))
+    _patch_large_constraints(monkeypatch)
+
+    statuses, errors = SupportMatrix.run_single_test(
+        model="deepseek-ai/DeepSeek-V4-Flash",
+        system=system,
+        backend="vllm",
+        version=version,
+        system_spec=_system_spec(system),
+    )
+
+    assert statuses == {"agg": STATUS_FAIL, "disagg": STATUS_FAIL}
+    assert error_message in errors["agg"]
+    if error_type is PerfDataNotAvailableError:
+        assert attempts == 4
+
+
+def test_dsv4_vllm_024_hopper_is_hardware_incompatible(monkeypatch):
+    def fake_run_mode(**_kwargs):
+        pytest.fail("hardware preflight should reject the native FP4 model")
+
+    monkeypatch.setattr(SupportMatrix, "_run_mode", staticmethod(fake_run_mode))
+    _patch_large_constraints(monkeypatch)
+
+    statuses, _errors = SupportMatrix.run_single_test(
+        model="deepseek-ai/DeepSeek-V4-Flash",
+        system="h200_sxm",
+        backend="vllm",
+        version="0.24.0",
+        system_spec=_system_spec("h200_sxm"),
+    )
+
+    assert statuses == {"agg": STATUS_HW_INCOMPATIBLE, "disagg": STATUS_HW_INCOMPATIBLE}
+
+
+def test_dsv4_vllm_024_non_native_sm120_gap_remains_framework_incompatible(monkeypatch):
+    def fake_run_mode(**_kwargs):
+        raise ValueError("Unsupported moe quant mode 'w4a8_mxfp4_mxfp8'")
+
+    monkeypatch.setattr(SupportMatrix, "_run_mode", staticmethod(fake_run_mode))
+    _patch_large_constraints(monkeypatch)
+
+    statuses, _errors = SupportMatrix.run_single_test(
+        model="deepseek-ai/DeepSeek-V4-Flash",
+        system="rtx_pro_6000_server",
+        backend="vllm",
+        version="0.24.0",
+        system_spec=_system_spec("rtx_pro_6000_server"),
+    )
+
+    assert statuses == {"agg": STATUS_FRAMEWORK_INCOMPATIBLE, "disagg": STATUS_FRAMEWORK_INCOMPATIBLE}
 
 
 def test_non_dsv4_vllm_019_error_remains_fail(monkeypatch):
@@ -236,6 +328,37 @@ def test_kimi_moonshot_trtllm_b200_int4_wo_is_framework_incompatible(monkeypatch
 
     assert statuses == {"agg": STATUS_FRAMEWORK_INCOMPATIBLE, "disagg": STATUS_FRAMEWORK_INCOMPATIBLE}
     assert "Unsupported moe quant mode 'int4_wo'" in errors["agg"]
+
+
+def test_kimi_framework_gap_can_be_hybrid_estimable_without_becoming_silicon_pass(monkeypatch):
+    calls: list[str] = []
+
+    def fake_run_mode(**kwargs):
+        calls.append(kwargs["database_mode"])
+        if kwargs["database_mode"] == "SILICON":
+            raise ValueError(
+                "Unsupported moe quant mode 'int4_wo' for system='b200_sxm', backend='trtllm', version='1.3.0rc10'."
+            )
+        return pd.DataFrame({"x": [1.0]})
+
+    monkeypatch.setattr(SupportMatrix, "_run_mode", staticmethod(fake_run_mode))
+    _patch_large_constraints(monkeypatch)
+
+    statuses, errors, commands, sources = SupportMatrix.run_single_test(
+        model="moonshotai/Kimi-K2.5",
+        system="b200_sxm",
+        backend="trtllm",
+        version="1.3.0rc10",
+        system_spec=_b200_system_spec(),
+        modes_to_test=["agg"],
+        include_commands=True,
+    )
+
+    assert statuses == {"agg": STATUS_HYBRID_PASS}
+    assert errors == {"agg": None}
+    assert sources == {"agg": "empirical"}
+    assert "--database-mode HYBRID" in commands["agg"]
+    assert calls == ["SILICON", "HYBRID"]
 
 
 def test_kimi_moonshot_trtllm_int4_wo_other_system_remains_fail(monkeypatch):

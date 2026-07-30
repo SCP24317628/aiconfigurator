@@ -24,13 +24,24 @@ from aiconfigurator.cli.main import (
 )
 from aiconfigurator.cli.report_and_save import save_results
 from aiconfigurator.sdk.config import ModelConfig
-from aiconfigurator.sdk.models import check_is_moe
+from aiconfigurator.sdk.config_builders import apply_nextn as _apply_nextn
+from aiconfigurator.sdk.config_builders import build_model_config as _build_model_config
+from aiconfigurator.sdk.config_builders import resolve_nextn_auto as _resolve_nextn_auto
+from aiconfigurator.sdk.errors import ExperimentOutcome, NoFeasibleConfigError, is_gpu_retriable
+from aiconfigurator.sdk.models import check_is_moe, resolve_context_fmha_by_data, resolve_dsv4_moe_arch
+from aiconfigurator.sdk.speculative import (
+    SpeculativeDecodingProfile,
+)
+from aiconfigurator.sdk.speculative import (
+    normalize_speculative_decoding as _normalize_nextn,
+)
 from aiconfigurator.sdk.task_v2 import Task
 
 # Default per-phase latency-correction scales for single-point disagg estimates.
 # (Migrated from the legacy V1 task module; same values as Task's field defaults.)
 DEFAULT_PREFILL_LATENCY_CORRECTION_SCALE = 1.1
 DEFAULT_DECODE_LATENCY_CORRECTION_SCALE = 1.08
+POWER_DATA_COVERAGE_THRESHOLD = 0.9
 
 
 def cli_support(
@@ -98,6 +109,9 @@ class CLIResult:
     raw_results: dict[str, dict[str, pd.DataFrame | None]] = field(default_factory=dict)
     """Raw pareto_df results from TaskRunner, keyed by experiment name."""
 
+    outcomes: dict[str, ExperimentOutcome] = field(default_factory=dict)
+    """Per-experiment success/failure verdicts from _execute_tasks."""
+
     def __repr__(self) -> str:
         return (
             f"CLIResult(chosen_exp={self.chosen_exp!r}, "
@@ -111,10 +125,19 @@ def _execute_and_wrap_result(
     mode: str,
     top_n: int = 5,
     strict_sla: bool = False,
+    target_request_rate: float | None = None,
+    target_concurrency: float | None = None,
+    parallel_experiments: bool = False,
 ) -> CLIResult:
     """Execute task configs using main.py's function and wrap result in CLIResult."""
-    chosen_exp, best_configs, pareto_fronts, best_throughputs, best_latencies = _execute_tasks_internal(
-        tasks, mode, top_n=top_n, strict_sla=strict_sla
+    chosen_exp, best_configs, pareto_fronts, best_throughputs, best_latencies, outcomes = _execute_tasks_internal(
+        tasks,
+        mode,
+        top_n=top_n,
+        strict_sla=strict_sla,
+        target_request_rate=target_request_rate,
+        target_concurrency=target_concurrency,
+        parallel_experiments=parallel_experiments,
     )
 
     return CLIResult(
@@ -125,6 +148,7 @@ def _execute_and_wrap_result(
         best_latencies=best_latencies,
         tasks=tasks,
         raw_results={},
+        outcomes=outcomes,
     )
 
 
@@ -137,15 +161,19 @@ def cli_default(
     backend: str = "trtllm",
     backend_version: str | None = None,
     database_mode: str = "SILICON",
+    transfer_policy: str | list | None = None,
     isl: int = 4000,
     osl: int = 1000,
     image_height: int = 0,
     image_width: int = 0,
     num_images: int = 1,
+    enable_encoder_dp: bool = True,
     ttft: float = 2000.0,
     tpot: float = 30.0,
     request_latency: float | None = None,
     prefix: int = 0,
+    nextn: int | str = 0,
+    nextn_accepted: float | None = None,
     strict_sla: bool = False,
     free_gpu_memory_fraction: float | None = None,
     max_seq_len: int | None = None,
@@ -174,11 +202,20 @@ def cli_default(
             ('SILICON', 'HYBRID', 'EMPIRICAL', 'SOL'). Default is 'SILICON'.
         isl: Input sequence length. Default is 4000.
         osl: Output sequence length. Default is 1000.
+        enable_encoder_dp: Model the vision encoder data-parallel (default True;
+            vLLM mm_encoder_tp_mode="data" / SGLang --mm-enable-dp-encoder semantics).
+            False models the legacy TP-sharded encoder.
         ttft: Time to first token target in ms. Default is 2000.
         tpot: Time per output token target in ms. Default is 30.
         request_latency: Optional end-to-end request latency target (ms).
             Enables request-latency optimization mode.
         prefix: Prefix cache length. Default is 0.
+        nextn: MTP draft length, or ``"auto"`` to use the checkpoint's
+            ``num_nextn_predict_layers`` (absent/0 keeps MTP disabled).
+            Default 0 (disabled); never enabled implicitly.
+        nextn_accepted: Average accepted draft tokens per decode step
+            (0 <= nextn_accepted <= nextn). Required when the draft depth
+            resolves to > 0; never inferred.
         strict_sla: When True, ``pareto_df`` is filtered to only
             SLA-compliant data points (TPOT or request-latency) *before*
             the Pareto frontier is computed.  TTFT is already enforced at
@@ -233,6 +270,12 @@ def cli_default(
         >>> print(result.chosen_exp)  # e.g., 'agg_trtllm' or 'disagg_vllm'
         >>> print(result.best_throughputs)  # Shows all 6 backend/mode combinations
     """
+    # Fail fast on inconsistent MTP inputs (same early check as the CLI path).
+    # nextn="auto" resolves the draft depth from the checkpoint first.
+    if nextn == "auto":
+        nextn = _resolve_nextn_auto(model_path)
+    nextn, nextn_accepted = _normalize_nextn(nextn, nextn_accepted)
+
     # Reuse build_default_tasks from main.py
     tasks = build_default_tasks(
         model_path=model_path,
@@ -242,21 +285,27 @@ def cli_default(
         backend=backend,
         backend_version=backend_version,
         database_mode=database_mode,
+        transfer_policy=transfer_policy,
         isl=isl,
         osl=osl,
         image_height=image_height,
         image_width=image_width,
         num_images=num_images,
+        enable_encoder_dp=enable_encoder_dp,
         ttft=ttft,
         tpot=tpot,
         request_latency=request_latency,
         prefix=prefix,
+        nextn=nextn,
+        nextn_accepted=nextn_accepted,
         free_gpu_memory_fraction=free_gpu_memory_fraction,
         max_seq_len=max_seq_len,
         engine_step_backend=engine_step_backend,
     )
 
     result = _execute_and_wrap_result(tasks, mode="default", top_n=top_n, strict_sla=strict_sla)
+    if not result.best_configs:
+        raise NoFeasibleConfigError("No feasible configurations found for the given parameters.")
 
     if save_dir:
         # Create a mock args object for save_results compatibility
@@ -283,6 +332,248 @@ def cli_default(
         mock_args.generator_set = generator_set
         mock_args.generator_config = generator_config
         mock_args.generator_dynamo_version = generator_dynamo_version
+
+        save_results(
+            args=mock_args,
+            best_configs=result.best_configs,
+            pareto_fronts=result.pareto_fronts,
+            tasks=result.tasks,
+            save_dir=save_dir,
+            generated_backend_version=None,
+        )
+
+    return result
+
+
+_MAX_GPUS_PER_WORKER = 64
+
+
+def _build_recommend_tasks(base_tasks: dict, total_gpus: int) -> dict:
+    """Scale GPU candidates for recommend mode."""
+    import dataclasses
+
+    num_gpu_candidates = [1 << i for i in range(total_gpus.bit_length()) if (1 << i) <= total_gpus]
+
+    rebuilt = {}
+    for name, task in base_tasks.items():
+        overrides = {
+            "total_gpus": total_gpus,
+            "agg_num_gpu_candidates": num_gpu_candidates,
+        }
+        if task.serving_mode == "disagg":
+            overrides.update(
+                prefill_num_gpu_candidates=num_gpu_candidates,
+                decode_num_gpu_candidates=num_gpu_candidates,
+            )
+        rebuilt[name] = dataclasses.replace(task, **overrides)
+    return rebuilt
+
+
+def cli_recommend(
+    model_path: str,
+    system: str,
+    *,
+    target_request_rate: float | None = None,
+    target_concurrency: float | None = None,
+    decode_system: str | None = None,
+    backend: str = "trtllm",
+    backend_version: str | None = None,
+    database_mode: str = "HYBRID",
+    transfer_policy: str | list | None = None,
+    isl: int = 4000,
+    osl: int = 1000,
+    image_height: int = 0,
+    image_width: int = 0,
+    num_images: int = 1,
+    ttft: float = 2000.0,
+    tpot: float = 30.0,
+    request_latency: float | None = None,
+    prefix: int = 0,
+    nextn: int | str = 0,
+    nextn_accepted: float | None = None,
+    strict_sla: bool = False,
+    enable_chunked_prefill: bool = False,
+    free_gpu_memory_fraction: float | None = None,
+    max_seq_len: int | None = None,
+    enable_wideep: bool = False,
+    moe_backend: str | None = None,
+    top_n: int = 5,
+    save_dir: str | None = None,
+    engine_step_backend: str | None = None,
+) -> CLIResult:
+    """Find the minimum number of GPUs to meet a performance target.
+
+    This is the programmatic equivalent of:
+        aiconfigurator cli recommend --model-path ... --system ... --target-request-rate ...
+
+    Inverts the default mode: instead of 'given GPUs, find best config',
+    this answers 'given performance targets, find minimum GPUs'.  Designed
+    as a procurement sizing tool — the output is unconstrained.
+
+    The function sweeps all valid per-worker parallelism configurations and
+    uses :func:`pick_load_match` to compute the replica count needed to
+    serve the target load under the given SLA constraints.
+
+    Exactly one of ``target_request_rate`` or ``target_concurrency`` must
+    be provided.
+
+    Args:
+        model_path: HuggingFace model path (e.g., 'Qwen/Qwen3-32B') or local path.
+        system: System name (GPU type), e.g., 'h200_sxm', 'b200_sxm'.
+        target_request_rate: Target system request rate in req/s.
+        target_concurrency: Target number of concurrent requests.
+        decode_system: System name for disagg decode workers. Defaults to ``system``.
+        backend: Backend name ('trtllm', 'sglang', 'vllm', 'auto').
+        backend_version: Backend database version. Default is latest.
+        database_mode: Database mode ('SILICON', 'HYBRID', 'EMPIRICAL', 'SOL').
+        transfer_policy: Fine-grained HYBRID/EMPIRICAL transfer control.
+        isl: Input sequence length. Default is 4000.
+        osl: Output sequence length. Default is 1000.
+        image_height: Image height for vision-language models.
+        image_width: Image width for vision-language models.
+        num_images: Number of images per request.
+        ttft: Time to first token SLA target in ms. Default is 2000.
+        tpot: Time per output token SLA target in ms. Default is 30.
+        request_latency: Optional end-to-end request latency target (ms).
+        prefix: Prefix cache length.
+        nextn: MTP draft length, or 'auto' to use the checkpoint's
+            num_nextn_predict_layers. Default is 0 (disabled).
+        nextn_accepted: Average accepted draft tokens per decode step
+            (0 <= nextn_accepted <= nextn). Required when the draft depth
+            resolves to > 0.
+        strict_sla: When True, filter to SLA-compliant configs only.
+        enable_chunked_prefill: Enable chunked prefill for finer context sweep.
+        free_gpu_memory_fraction: Fraction of free GPU memory for KV cache.
+        max_seq_len: TRT-LLM max_seq_len setting.
+        enable_wideep: Enable Wide Expert Parallelism for MoE models.
+        moe_backend: Explicit SGLang MoE backend override.
+        top_n: Number of top configurations to return per mode. Default is 5.
+        save_dir: Directory to save results. If None, results are not saved.
+        engine_step_backend: Experimental static latency backend.
+
+    Returns:
+        CLIResult with best configs containing ``total_gpus_needed`` and
+        ``replicas_needed`` columns, ranked by fewest GPUs first.
+
+    Example:
+        >>> result = cli_recommend(
+        ...     model_path="Qwen/Qwen3-32B",
+        ...     system="h200_sxm",
+        ...     target_request_rate=50.0,
+        ...     ttft=2000,
+        ...     tpot=30,
+        ... )
+        >>> print(result.best_configs)
+    """
+    import math
+
+    from aiconfigurator.sdk.perf_database import load_system_spec
+
+    has_rate = target_request_rate is not None
+    has_conc = target_concurrency is not None
+    if has_rate == has_conc:
+        raise ValueError("Exactly one of target_request_rate or target_concurrency must be provided.")
+    load_target = target_request_rate if has_rate else target_concurrency
+    if not (math.isfinite(load_target) and load_target > 0):
+        raise ValueError(f"Load target must be a positive finite number, got {load_target}.")
+
+    spec = load_system_spec(system)
+    gpus_per_node = spec["node"]["num_gpus_per_node"]
+
+    # Fail fast on inconsistent MTP inputs (same early check as cli_default).
+    # nextn="auto" resolves the draft depth from the checkpoint first.
+    if nextn == "auto":
+        nextn = _resolve_nextn_auto(model_path)
+    nextn, nextn_accepted = _normalize_nextn(nextn, nextn_accepted)
+
+    base_tasks = build_default_tasks(
+        model_path=model_path,
+        total_gpus=gpus_per_node,
+        system=system,
+        decode_system=decode_system,
+        backend=backend,
+        backend_version=backend_version,
+        database_mode=database_mode,
+        transfer_policy=transfer_policy,
+        isl=isl,
+        osl=osl,
+        image_height=image_height,
+        image_width=image_width,
+        num_images=num_images,
+        ttft=ttft,
+        tpot=tpot,
+        request_latency=request_latency,
+        prefix=prefix,
+        nextn=nextn,
+        nextn_accepted=nextn_accepted,
+        enable_chunked_prefill=enable_chunked_prefill,
+        free_gpu_memory_fraction=free_gpu_memory_fraction,
+        max_seq_len=max_seq_len,
+        engine_step_backend=engine_step_backend,
+        enable_wideep=enable_wideep,
+        moe_backend=moe_backend,
+    )
+
+    # Build escalation sequence: gpus_per_node, *2, *4, *8, capped at _MAX_GPUS_PER_WORKER.
+    budgets = [gpus_per_node]
+    budget = gpus_per_node * 2
+    while budget <= _MAX_GPUS_PER_WORKER:
+        budgets.append(budget)
+        budget *= 2
+
+    result = None
+    for attempt, gpu_budget in enumerate(budgets):
+        tasks = _build_recommend_tasks(base_tasks, gpu_budget)
+        result = _execute_and_wrap_result(
+            tasks,
+            mode="default",
+            top_n=top_n,
+            strict_sla=strict_sla,
+            target_request_rate=target_request_rate,
+            target_concurrency=target_concurrency,
+            parallel_experiments=True,
+        )
+        retriable = [
+            name
+            for name, outcome in result.outcomes.items()
+            if outcome.error is not None and is_gpu_retriable(outcome.error)
+        ]
+        if not retriable or attempt == len(budgets) - 1:
+            break
+        logger.info(
+            "Recommend: %s may fit at larger budget; escalating to %d.",
+            ", ".join(retriable),
+            budgets[attempt + 1],
+        )
+
+    if not result.best_configs:
+        raise NoFeasibleConfigError("No feasible GPU configuration found for the given load target.")
+
+    if save_dir:
+
+        class _MockArgs:
+            pass
+
+        mock_args = _MockArgs()
+        mock_args.save_dir = save_dir
+        mock_args.mode = "recommend"
+        mock_args.model_path = model_path
+        mock_args.total_gpus = 0
+        mock_args.system = system
+        mock_args.backend = backend
+        mock_args.isl = isl
+        mock_args.osl = osl
+        mock_args.image_height = image_height
+        mock_args.image_width = image_width
+        mock_args.num_images = num_images
+        mock_args.ttft = ttft
+        mock_args.tpot = tpot
+        mock_args.request_latency = request_latency
+        mock_args.top_n = top_n
+        mock_args.generated_config_version = None
+        mock_args.generator_set = None
+        mock_args.generator_config = None
+        mock_args.generator_dynamo_version = None
 
         save_results(
             args=mock_args,
@@ -382,6 +673,8 @@ def cli_exp(
         raise ValueError("No valid experiments found in configuration.")
 
     result = _execute_and_wrap_result(tasks, mode="exp", top_n=top_n)
+    if not result.best_configs:
+        raise NoFeasibleConfigError("No feasible configurations found for the given experiments.")
 
     if save_dir:
         # Create a mock args object for save_results compatibility
@@ -417,8 +710,8 @@ class EstimateResult:
     tpot: float
     """Time per output token (ms)."""
 
-    power_w: float
-    """End-to-end weighted average power per GPU (watts)."""
+    power_w: float | None
+    """End-to-end weighted average power per GPU, or ``None`` when coverage is insufficient."""
 
     isl: int
     """Input sequence length used."""
@@ -543,6 +836,17 @@ class EstimateResult:
             return 0.0
         return self.raw.get("memory", 0.0)
 
+    @property
+    def power_coverage(self) -> float | None:
+        """Latency-weighted fraction of operations backed by power data."""
+        coverage = self.raw.get("power_coverage")
+        return float(coverage) if coverage is not None else None
+
+    @property
+    def power_is_available(self) -> bool:
+        """Whether ``power_w`` passed the minimum data-coverage gate."""
+        return self.power_w is not None
+
     def get(self) -> dict:
         """
         Return all metrics as a dict matching the CSV column schema.
@@ -560,11 +864,27 @@ class EstimateResult:
         return result
 
     def __repr__(self) -> str:
+        power = f"{self.power_w:.1f}W" if self.power_w is not None else "unavailable"
         return (
             f"EstimateResult(mode={self.mode!r}, ttft={self.ttft:.3f}ms, tpot={self.tpot:.3f}ms, "
-            f"power={self.power_w:.1f}W, model={self.model_path}, "
+            f"power={power}, model={self.model_path}, "
             f"system={self.system_name}, backend={self.backend_name})"
         )
+
+
+def _apply_power_coverage_gate(summary, result_dict: dict) -> dict:
+    """Hide modeled power when measured-energy coverage is incomplete.
+
+    Latency, throughput, and memory remain valid and are returned unchanged.
+    The raw result records the exact coverage ratio so callers can explain why
+    power is unavailable without treating the whole estimate as failed.
+    """
+    gated = dict(result_dict)
+    coverage = summary.get_power_data_coverage()
+    gated["power_coverage"] = coverage
+    if coverage < POWER_DATA_COVERAGE_THRESHOLD:
+        gated["power_w"] = None
+    return gated
 
 
 def _resolve_moe_parallelism(
@@ -591,42 +911,6 @@ def _resolve_moe_parallelism(
     return cfg.resolve_moe_parallelism()
 
 
-def _build_model_config(
-    tp_size: int,
-    pp_size: int,
-    attention_dp_size: int,
-    moe_tp_size: int,
-    moe_ep_size: int,
-    gemm_quant_mode: str | None = None,
-    kvcache_quant_mode: str | None = None,
-    fmha_quant_mode: str | None = None,
-    moe_quant_mode: str | None = None,
-    comm_quant_mode: str | None = None,
-):
-    """Build a ModelConfig with optional quant mode overrides."""
-    from aiconfigurator.sdk.common import (
-        CommQuantMode,
-        FMHAQuantMode,
-        GEMMQuantMode,
-        KVCacheQuantMode,
-        MoEQuantMode,
-    )
-    from aiconfigurator.sdk.config import ModelConfig
-
-    return ModelConfig(
-        tp_size=tp_size,
-        pp_size=pp_size,
-        attention_dp_size=attention_dp_size,
-        moe_tp_size=moe_tp_size,
-        moe_ep_size=moe_ep_size,
-        gemm_quant_mode=GEMMQuantMode[gemm_quant_mode] if gemm_quant_mode else None,
-        kvcache_quant_mode=KVCacheQuantMode[kvcache_quant_mode] if kvcache_quant_mode else None,
-        fmha_quant_mode=FMHAQuantMode[fmha_quant_mode] if fmha_quant_mode else None,
-        moe_quant_mode=MoEQuantMode[moe_quant_mode] if moe_quant_mode else None,
-        comm_quant_mode=CommQuantMode[comm_quant_mode] if comm_quant_mode else None,
-    )
-
-
 def cli_estimate(
     model_path: str,
     system_name: str,
@@ -635,11 +919,13 @@ def cli_estimate(
     backend_name: str = "trtllm",
     backend_version: str | None = None,
     database_mode: str = "SILICON",
+    transfer_policy: str | list | None = None,
     isl: int = 1024,
     osl: int = 1024,
     image_height: int = 0,
     image_width: int = 0,
     num_images: int = 1,
+    enable_encoder_dp: bool = True,
     batch_size: int = 128,
     ctx_tokens: int | None = None,
     tp_size: int = 1,
@@ -674,8 +960,8 @@ def cli_estimate(
     engine_step_backend: str | None = None,
     # Static-mode (and shared) extras
     prefix: int = 0,
-    nextn: int = 0,
-    nextn_accept_rates: list[float] | None = None,
+    nextn: int | str = 0,
+    nextn_accepted: float | None = None,
     stride: int = 32,
     # AFD-specific parameters (ignored when mode != 'afd')
     n_a_nodes: int | None = None,
@@ -716,6 +1002,9 @@ def cli_estimate(
         image_height: Image height in pixels for VL models. Default 0 disables encoder modeling.
         image_width: Image width in pixels for VL models. Default 0 disables encoder modeling.
         num_images: Number of images per request for VL models. Default 1.
+        enable_encoder_dp: Model the vision encoder data-parallel (default True;
+            vLLM mm_encoder_tp_mode="data" / SGLang --mm-enable-dp-encoder semantics).
+            False models the legacy TP-sharded encoder.
         batch_size: Batch size (max concurrent requests, used for agg mode). Default is 128.
         ctx_tokens: Context tokens budget for IFB scheduling (agg mode only).
             Default is None, which uses ``isl`` as the budget.
@@ -759,15 +1048,12 @@ def cli_estimate(
         engine_step_backend: Experimental static latency backend ("python" or "rust").
         prefix: (common) Prefix cache length (subset of ``isl`` already cached).
             Applied to agg, disagg, and all static modes. Default 0.
-        nextn: (common) Number of MTP/speculative draft tokens. Applied to
-            agg, disagg, and all static modes. Default 0 (disabled).
-            **Note:** unlike :func:`cli_default`, this entrypoint does **not**
-            auto-set ``nextn=1`` for DeepSeek/Qwen3.5 models — pass
-            ``nextn=1`` explicitly when you want MTP to mirror the default-mode
-            behavior.
-        nextn_accept_rates: (common) Acceptance rates for the MTP draft tokens
-            (only the first ``nextn`` entries are used).
-            Default ``[0.85, 0.3, 0, 0, 0]``.
+        nextn: (common) MTP draft length, or ``"auto"`` to use the checkpoint's
+            ``num_nextn_predict_layers``. Applied to agg, disagg, and all
+            static modes. Default 0 (disabled); MTP is never enabled implicitly.
+        nextn_accepted: (common) Average accepted draft tokens per decode step
+            (0 <= nextn_accepted <= nextn). Required when the draft depth
+            resolves to > 0; never inferred.
         stride: (static-only) Stride used by ``run_static`` to accelerate the
             OSL sweep. Ignored by agg / disagg. Default 32.
         n_a_nodes: (afd-only) Number of A-Worker (attention) nodes. Required
@@ -817,11 +1103,17 @@ def cli_estimate(
     from aiconfigurator.sdk.backends.factory import get_backend
     from aiconfigurator.sdk.models import get_model
     from aiconfigurator.sdk.perf_database import (
-        get_database,
+        get_database_view,
         get_latest_database_version,
         get_systems_paths,
         set_systems_paths,
     )
+
+    # Resolve nextn="auto" against the checkpoint before mode dispatch so every
+    # estimate path (agg/disagg/static/afd) sees a plain int.
+    if nextn == "auto":
+        nextn = _resolve_nextn_auto(model_path)
+    nextn, nextn_accepted = _normalize_nextn(nextn, nextn_accepted)
 
     active_systems_paths = None
     if systems_paths is not None:
@@ -854,10 +1146,16 @@ def cli_estimate(
 
     def _load_database(sys_name: str):
         resolved_version = _resolve_version_for(sys_name)
-        database_kwargs = {"allow_missing_data": database_mode != "SILICON"}
+        # database_mode is needed at construction, not just at query time: SILICON and
+        # HYBRID load declared shared-layer silicon rows, while formula-only modes do not.
+        database_kwargs = {
+            "allow_missing_data": database_mode != "SILICON",
+            "database_mode": database_mode,
+            "transfer_policy": transfer_policy,
+        }
         if active_systems_paths is not None:
             database_kwargs["systems_paths"] = active_systems_paths
-        db = get_database(
+        db = get_database_view(
             sys_name,
             backend_name,
             resolved_version,
@@ -868,10 +1166,6 @@ def cli_estimate(
                 f"Failed to load perf database for system={sys_name}, "
                 f"backend={backend_name}, version={resolved_version}."
             )
-        if database_mode != "SILICON":
-            from aiconfigurator.sdk.common import DatabaseMode
-
-            db.set_default_database_mode(DatabaseMode[database_mode])
         return db
 
     if mode in ("static", "static_ctx", "static_gen"):
@@ -887,6 +1181,7 @@ def cli_estimate(
             image_height=image_height,
             image_width=image_width,
             num_images=num_images,
+            enable_encoder_dp=enable_encoder_dp,
             batch_size=batch_size,
             prefix=prefix,
             tp_size=tp_size,
@@ -900,7 +1195,7 @@ def cli_estimate(
             moe_quant_mode=moe_quant_mode,
             comm_quant_mode=comm_quant_mode,
             nextn=nextn,
-            nextn_accept_rates=nextn_accept_rates,
+            nextn_accepted=nextn_accepted,
             stride=stride,
             engine_step_backend=engine_step_backend,
             load_database=_load_database,
@@ -920,6 +1215,7 @@ def cli_estimate(
             image_height=image_height,
             image_width=image_width,
             num_images=num_images,
+            enable_encoder_dp=enable_encoder_dp,
             batch_size=batch_size,
             ctx_tokens=ctx_tokens if ctx_tokens is not None else isl,
             tp_size=tp_size,
@@ -940,7 +1236,7 @@ def cli_estimate(
             engine_step_backend=engine_step_backend,
             prefix=prefix,
             nextn=nextn,
-            nextn_accept_rates=nextn_accept_rates,
+            nextn_accepted=nextn_accepted,
         )
     elif mode == "disagg":
         prefill_resolved_version = _resolve_version_for(system_name)
@@ -965,6 +1261,7 @@ def cli_estimate(
             model_path=model_path,
             system_name=system_name,
             decode_system_name=decode_system,
+            free_gpu_memory_fraction=free_gpu_memory_fraction,
             backend_name=backend_name,
             resolved_version=resolved_version,
             isl=isl,
@@ -972,6 +1269,7 @@ def cli_estimate(
             image_height=image_height,
             image_width=image_width,
             num_images=num_images,
+            enable_encoder_dp=enable_encoder_dp,
             # Prefill config (fall back to shared args)
             prefill_tp_size=prefill_tp_size if prefill_tp_size is not None else tp_size,
             prefill_pp_size=prefill_pp_size if prefill_pp_size is not None else pp_size,
@@ -1004,7 +1302,7 @@ def cli_estimate(
             engine_step_backend=engine_step_backend,
             prefix=prefix,
             nextn=nextn,
-            nextn_accept_rates=nextn_accept_rates,
+            nextn_accepted=nextn_accepted,
         )
     elif mode == "afd":
         for name, val in [
@@ -1060,7 +1358,7 @@ def cli_estimate(
             max_seq_len=max_seq_len,
             prefix=prefix,
             nextn=nextn,
-            nextn_accept_rates=nextn_accept_rates,
+            nextn_accepted=nextn_accepted,
         )
         # ``phase == "both"`` covers prefill+decode inside AFD; no static
         # complement is needed. When ``combined_with_pd`` is False the
@@ -1083,6 +1381,7 @@ def cli_estimate(
             image_height=image_height,
             image_width=image_width,
             num_images=num_images,
+            enable_encoder_dp=enable_encoder_dp,
             batch_size=batch_size,
             prefix=prefix,
             tp_size=tp_size,
@@ -1096,7 +1395,7 @@ def cli_estimate(
             moe_quant_mode=moe_quant_mode,
             comm_quant_mode=comm_quant_mode,
             nextn=nextn,
-            nextn_accept_rates=nextn_accept_rates,
+            nextn_accepted=nextn_accepted,
             stride=stride,
             engine_step_backend=engine_step_backend,
             load_database=_load_database,
@@ -1120,25 +1419,6 @@ def cli_estimate(
         )
 
 
-def _apply_nextn(
-    model_config,
-    nextn: int | None,
-    nextn_accept_rates: list[float] | None,
-) -> None:
-    """Apply common ``nextn`` / ``nextn_accept_rates`` overrides onto a ModelConfig.
-
-    Mirrors the static-mode path so agg / disagg / static all respond to the
-    same CLI flags. When ``nextn>0`` and no explicit accept rates are given,
-    fall back to the project-wide default ``[0.85, 0.3, 0, 0, 0]`` (matches
-    ``cli default``'s _base_common_layer).
-    """
-    model_config.nextn = int(nextn or 0)
-    if nextn_accept_rates is not None:
-        model_config.nextn_accept_rates = list(nextn_accept_rates)
-    elif model_config.nextn > 0:
-        model_config.nextn_accept_rates = [0.85, 0.3, 0.0, 0.0, 0.0]
-
-
 def _run_agg_estimate(
     *,
     model_path,
@@ -1150,6 +1430,7 @@ def _run_agg_estimate(
     image_height,
     image_width,
     num_images,
+    enable_encoder_dp,
     batch_size,
     ctx_tokens,
     tp_size,
@@ -1171,7 +1452,7 @@ def _run_agg_estimate(
     # Common (also accepted by disagg / static)
     prefix: int = 0,
     nextn: int = 0,
-    nextn_accept_rates: list[float] | None = None,
+    nextn_accepted: float | None = None,
 ) -> EstimateResult:
     """Run aggregated (IFB) estimation."""
     from aiconfigurator.sdk.config import RuntimeConfig
@@ -1192,8 +1473,15 @@ def _run_agg_estimate(
         fmha_quant_mode,
         moe_quant_mode,
         comm_quant_mode,
+        enable_encoder_dp=enable_encoder_dp,
     )
-    _apply_nextn(model_config, nextn, nextn_accept_rates)
+    _apply_nextn(model_config, nextn)
+    # Agg workers run context attention → resolve fmha against the perf data
+    # before building the model (mirrors the sweep/task_v2 path).
+    resolve_context_fmha_by_data(
+        model_config, model_path, load_database(system_name), backend_name, is_context_role=True
+    )
+    resolve_dsv4_moe_arch(model_config, model_path, system_name=system_name, backend_name=backend_name)
     runtime_config = RuntimeConfig(
         isl=isl,
         osl=osl,
@@ -1209,12 +1497,15 @@ def _run_agg_estimate(
     database = load_database(system_name)
     backend = get_backend(backend_name)
     session = InferenceSession(model, database, backend)
+    speculative_profile = SpeculativeDecodingProfile.from_inputs(nextn, nextn_accepted)
     summary = session.run_agg(
         runtime_config,
         ctx_tokens=ctx_tokens,
         max_seq_len=max_seq_len,
         free_gpu_memory_fraction=free_gpu_memory_fraction,
+        decode_tokens_per_iteration=speculative_profile.tokens_per_iteration,
     )
+    summary = speculative_profile.project_summary(summary, role="agg")
 
     if summary.check_oom():
         raise RuntimeError(
@@ -1227,6 +1518,7 @@ def _run_agg_estimate(
     result_dict = summary.get_result_dict()
     if result_dict is None:
         raise RuntimeError("Estimation produced no results. The configuration may be invalid.")
+    result_dict = _apply_power_coverage_gate(summary, result_dict)
 
     kv_warning = None
     if summary.check_kv_cache_oom():
@@ -1272,6 +1564,7 @@ def _run_static_estimate(
     image_height,
     image_width,
     num_images,
+    enable_encoder_dp,
     batch_size,
     prefix,
     tp_size,
@@ -1285,7 +1578,7 @@ def _run_static_estimate(
     moe_quant_mode,
     comm_quant_mode,
     nextn,
-    nextn_accept_rates,
+    nextn_accepted,
     stride,
     engine_step_backend,
     load_database,
@@ -1320,8 +1613,19 @@ def _run_static_estimate(
         fmha_quant_mode,
         moe_quant_mode,
         comm_quant_mode,
+        enable_encoder_dp=enable_encoder_dp,
     )
-    _apply_nextn(model_config, nextn, nextn_accept_rates)
+    _apply_nextn(model_config, nextn)
+    # static / static_ctx run context attention; static_gen is generation-only
+    # and legitimately keeps fp8 FMHA. Resolve fmha against the perf data accordingly.
+    resolve_context_fmha_by_data(
+        model_config,
+        model_path,
+        load_database(system_name),
+        backend_name,
+        is_context_role=static_mode != "static_gen",
+    )
+    resolve_dsv4_moe_arch(model_config, model_path, system_name=system_name, backend_name=backend_name)
 
     runtime_config = RuntimeConfig(
         batch_size=batch_size,
@@ -1343,6 +1647,12 @@ def _run_static_estimate(
         mode=static_mode,
         stride=stride,
     )
+    projection_role = (
+        "prefill" if static_mode == "static_ctx" else ("decode" if static_mode == "static_gen" else "static")
+    )
+    summary = SpeculativeDecodingProfile.from_inputs(nextn, nextn_accepted).project_summary(
+        summary, role=projection_role
+    )
 
     static_warning = None
     if summary.check_oom():
@@ -1356,11 +1666,12 @@ def _run_static_estimate(
     result_dict = summary.get_result_dict()
     if result_dict is None:
         raise RuntimeError("Static estimation produced no results. The configuration may be invalid.")
+    result_dict = _apply_power_coverage_gate(summary, result_dict)
 
     return EstimateResult(
         ttft=float(result_dict.get("ttft", 0.0) or 0.0),
         tpot=float(result_dict.get("tpot", 0.0) or 0.0),
-        power_w=float(result_dict.get("power_w", 0.0) or 0.0),
+        power_w=result_dict.get("power_w"),
         isl=isl,
         osl=osl,
         batch_size=batch_size,
@@ -1392,6 +1703,7 @@ def _run_disagg_estimate(
     image_height,
     image_width,
     num_images,
+    enable_encoder_dp,
     prefill_tp_size,
     prefill_pp_size,
     prefill_attention_dp_size,
@@ -1418,7 +1730,8 @@ def _run_disagg_estimate(
     # Common (also accepted by agg / static)
     prefix: int = 0,
     nextn: int = 0,
-    nextn_accept_rates: list[float] | None = None,
+    nextn_accepted: float | None = None,
+    free_gpu_memory_fraction: float | None = None,
 ) -> EstimateResult:
     """Run disaggregated estimation."""
     from aiconfigurator.sdk.config import RuntimeConfig
@@ -1451,6 +1764,7 @@ def _run_disagg_estimate(
         fmha_quant_mode,
         moe_quant_mode,
         comm_quant_mode,
+        enable_encoder_dp=enable_encoder_dp,
     )
     decode_model_config = _build_model_config(
         decode_tp_size,
@@ -1463,11 +1777,24 @@ def _run_disagg_estimate(
         fmha_quant_mode,
         moe_quant_mode,
         comm_quant_mode,
+        enable_encoder_dp=enable_encoder_dp,
     )
     # Apply common nextn/MTP overrides to *both* prefill and decode worker
     # configs so a single ``--nextn N`` reaches each side of the disagg pair.
-    _apply_nextn(prefill_model_config, nextn, nextn_accept_rates)
-    _apply_nextn(decode_model_config, nextn, nextn_accept_rates)
+    _apply_nextn(prefill_model_config, nextn)
+    _apply_nextn(decode_model_config, nextn)
+    # Prefill runs context attention → resolve fmha against the perf data. Decode
+    # is generation-only and keeps fp8, so it needs no adjustment.
+    resolve_context_fmha_by_data(
+        prefill_model_config, model_path, load_database(system_name), backend_name, is_context_role=True
+    )
+    resolve_dsv4_moe_arch(prefill_model_config, model_path, system_name=system_name, backend_name=backend_name)
+    resolve_dsv4_moe_arch(
+        decode_model_config,
+        model_path,
+        system_name=decode_system_name or system_name,
+        backend_name=backend_name,
+    )
 
     runtime_config = RuntimeConfig(
         isl=isl,
@@ -1504,6 +1831,8 @@ def _run_disagg_estimate(
         decode_model_config=decode_model_config,
         decode_batch_size=decode_batch_size,
         decode_num_worker=decode_num_workers,
+        speculative_profile=SpeculativeDecodingProfile.from_inputs(nextn, nextn_accepted),
+        free_gpu_memory_fraction=free_gpu_memory_fraction,
     )
 
     if summary.check_oom():
@@ -1522,6 +1851,7 @@ def _run_disagg_estimate(
     result_dict = summary.get_result_dict()
     if result_dict is None:
         raise RuntimeError("Disagg estimation produced no results. The configuration may be invalid.")
+    result_dict = _apply_power_coverage_gate(summary, result_dict)
 
     return EstimateResult(
         ttft=result_dict["ttft"],
@@ -1586,7 +1916,21 @@ def _combine_afd_static_estimate_results(
     tokens_s = seq_s * afd_result.osl
     decode_time = tpot * max(afd_result.osl - 1, 0)
     request_latency = ttft + decode_time
-    power_w = (prefill_power * ttft + decode_power * decode_time) / request_latency if request_latency > 0.0 else 0.0
+    prefill_coverage = static_result.power_coverage if afd_phase == "decode" else afd_result.power_coverage
+    decode_coverage = afd_result.power_coverage if afd_phase == "decode" else static_result.power_coverage
+    if request_latency > 0.0 and prefill_coverage is not None and decode_coverage is not None:
+        power_coverage = (prefill_coverage * ttft + decode_coverage * decode_time) / request_latency
+    else:
+        power_coverage = 0.0
+    if (
+        request_latency > 0.0
+        and prefill_power is not None
+        and decode_power is not None
+        and power_coverage >= POWER_DATA_COVERAGE_THRESHOLD
+    ):
+        power_w = (prefill_power * ttft + decode_power * decode_time) / request_latency
+    else:
+        power_w = None
 
     result_dict = dict(afd_raw)
     result_dict.update(
@@ -1601,7 +1945,8 @@ def _combine_afd_static_estimate_results(
             "concurrency": concurrency,
             "num_total_gpus": total_gpus,
             "memory": round(max(afd_result.memory, static_result.memory), 2),
-            "power_w": round(power_w, 3),
+            "power_w": round(power_w, 3) if power_w is not None else None,
+            "power_coverage": power_coverage,
             "(p)impl": prefill_impl,
             "(d)impl": decode_impl,
         }
@@ -1675,7 +2020,7 @@ def _run_afd_estimate(
     max_seq_len,
     prefix: int = 0,
     nextn: int = 0,
-    nextn_accept_rates: list[float] | None = None,
+    nextn_accepted: float | None = None,
 ) -> EstimateResult:
     """Run AFD (Attention-FFN Disaggregated) estimation.
 
@@ -1744,8 +2089,17 @@ def _run_afd_estimate(
     # Pass speculative decode knobs through to A/F model configs. TODO:
     # AFDTransfer still models committed decode-token volume only; recalibrate
     # MTP transfer amplification once the serving semantics are finalized.
-    _apply_nextn(a_model_config, nextn, nextn_accept_rates)
-    _apply_nextn(f_model_config, nextn, nextn_accept_rates)
+    _apply_nextn(a_model_config, nextn)
+    _apply_nextn(f_model_config, nextn)
+    # The A-worker runs context attention whenever the phase covers prefill
+    # ("prefill" or "both"); resolve fmha against the perf data then. The
+    # F-worker is FFN/MoE only and never touches FMHA. The decode-phase static
+    # complement is a static_ctx call handled in _run_static_estimate.
+    resolve_context_fmha_by_data(
+        a_model_config, model_path, database, backend_name, is_context_role=afd_phase in ("prefill", "both")
+    )
+    resolve_dsv4_moe_arch(a_model_config, model_path, system_name=system_name, backend_name=backend_name)
+    resolve_dsv4_moe_arch(f_model_config, model_path, system_name=system_name, backend_name=backend_name)
 
     afd_config = AFDConfig(
         n_a_nodes=n_a_nodes,
@@ -1782,6 +2136,7 @@ def _run_afd_estimate(
         phase=afd_phase,
         free_gpu_memory_fraction=free_gpu_memory_fraction,
         max_seq_len=max_seq_len,
+        speculative_profile=SpeculativeDecodingProfile.from_inputs(nextn, nextn_accepted),
     )
 
     if summary.check_oom():
@@ -1800,6 +2155,7 @@ def _run_afd_estimate(
     if afd_phase == "both":
         result_dict.setdefault("(p)impl", "afd")
         result_dict.setdefault("(d)impl", "afd")
+    result_dict = _apply_power_coverage_gate(summary, result_dict)
 
     return EstimateResult(
         ttft=result_dict.get("ttft", 0.0),
@@ -1833,5 +2189,6 @@ __all__ = [
     "cli_estimate",
     "cli_exp",
     "cli_generate",
+    "cli_recommend",
     "cli_support",
 ]

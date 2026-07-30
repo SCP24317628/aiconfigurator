@@ -91,7 +91,9 @@ def _patch_all_loaders_and_yaml(monkeypatch) -> None:
     """
     # Patch yaml.load so that PerfDatabase.__init__ sees a valid system_spec.
     dummy_system_spec = {
-        "data_dir": "data",  # PerfDatabase will look under systems_dir/data/<backend>/<version>
+        # PerfDatabase uses a legacy-shaped logical lookup key, then resolves
+        # physical files under data/<family>/<backend>/<version>.
+        "data_dir": "data",
         "misc": {"nccl_version": "v1"},
         "gpu": {
             # These two values are used in many "SOL"-mode formulas:
@@ -155,9 +157,23 @@ def _patch_all_loaders_and_yaml(monkeypatch) -> None:
         "load_moe_data": ({}, {}),
     }
 
+    # The DSA module loaders take op_kind="full"/"skip". A stub that swallows
+    # op_kind would MASK skip/full mis-wiring (both collapse to one value, so a
+    # test passes even if skip_indexer is routed to the wrong loader mode). When
+    # an override supplies op_kind-keyed data ({"full": ..., "skip": ...}), honor
+    # op_kind. The default (None) is unchanged: both op_kinds return the same value.
+    _op_kind_loaders = {"load_context_dsa_module_data", "load_generation_dsa_module_data"}
     for name, (target_module, default_value) in _LOADER_STUBS.items():
         ret = overrides.get(name, default_value)
-        monkeypatch.setattr(f"{target_module}.{name}", lambda path, _r=ret: _r)
+        if name in _op_kind_loaders and isinstance(ret, dict) and set(ret) <= {"full", "skip"}:
+            monkeypatch.setattr(
+                f"{target_module}.{name}",
+                lambda path, *args, _m=ret, op_kind="full", **kwargs: _m.get(op_kind),
+            )
+        else:
+            # Accept arbitrary extra args/kwargs so loaders with optional params
+            # (e.g. load_*_dsa_module_data(path, op_kind="full")) stub cleanly.
+            monkeypatch.setattr(f"{target_module}.{name}", lambda path, *args, _r=ret, **kwargs: _r)
 
 
 @pytest.fixture

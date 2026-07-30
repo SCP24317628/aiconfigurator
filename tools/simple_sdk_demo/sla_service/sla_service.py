@@ -12,6 +12,7 @@ import pandas as pd
 import uvicorn
 from fastapi import Body, FastAPI, Response
 
+from aiconfigurator.cli.api import cli_recommend
 from aiconfigurator.sdk import common
 from aiconfigurator.sdk.backends.factory import get_backend
 from aiconfigurator.sdk.common import get_default_models
@@ -44,6 +45,66 @@ def list_supported_models():
         content=orjson.dumps({"model list:": sorted(get_default_models())}),
         media_type="application/json",
     )
+
+
+@app.post("/recommend")
+def post_recommend(
+    model_path: str = Body("Qwen/Qwen3-32B-FP8", description="HuggingFace model path"),
+    system: str = Body(
+        "h200_sxm",
+        description="GPU system: h200_sxm, h100_sxm, b200_sxm, b300_sxm, gb200, gb300, a100_sxm, l40s",
+    ),
+    backend: str = Body("trtllm", description="backend: trtllm, sglang, vllm"),
+    backend_version: str | None = Body(None, description="backend version (default: latest)"),
+    target_request_rate: float | None = Body(
+        None, description="Target request rate in req/s. Set exactly one of rate or concurrency."
+    ),
+    target_concurrency: float | None = Body(
+        None, description="Target number of concurrent users. Set exactly one of rate or concurrency."
+    ),
+    isl: int = Body(4000, description="input sequence length"),
+    osl: int = Body(1000, description="output sequence length"),
+    ttft: float = Body(2000.0, description="TTFT target in ms"),
+    tpot: float = Body(30.0, description="TPOT target in ms"),
+    request_latency: float | None = Body(None, description="end-to-end request latency target in ms (optional)"),
+    prefix: int = Body(0, description="prefix cache length"),
+    database_mode: str = Body("HYBRID", description="HYBRID (default), SILICON, EMPIRICAL, or SOL"),
+    top_n: int = Body(5, description="number of top configurations to return"),
+):
+    """Find the minimum number of GPUs and optimal deployment configuration.
+
+    Given a model, system, backend, workload, and a load target (request rate
+    or concurrency), searches across parallelism configs (TP/PP/DP/EP) and
+    serving modes (agg and disagg) to find the deployment with the fewest GPUs
+    that meets the SLA constraints.
+    """
+    try:
+        result = cli_recommend(
+            model_path=model_path,
+            system=system,
+            target_request_rate=target_request_rate,
+            target_concurrency=target_concurrency,
+            backend=backend,
+            backend_version=backend_version,
+            database_mode=database_mode,
+            isl=isl,
+            osl=osl,
+            ttft=ttft,
+            tpot=tpot,
+            request_latency=request_latency,
+            prefix=prefix,
+            top_n=top_n,
+        )
+        best = result.best_configs.get(result.chosen_exp)
+        if best is not None and not best.empty:
+            row = best.iloc[0].to_dict()
+            return {k: v for k, v in row.items() if pd.notna(v)}
+        return {"error": "No configuration meets the specified requirements."}
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.exception("recommend failed")
+        return {"error": str(e)}
 
 
 @app.post("/sla")
@@ -120,13 +181,14 @@ def post_sla(
         cc_list = [cc for cc in concurrency_list_default if cc >= min_cc]
         results_df = pd.DataFrame(columns=common.ColumnsAgg)
         for parallel_config in agg_parallel_config_list:
-            tp_size, pp_size, dp_size, moe_tp_size, moe_ep_size = parallel_config
+            tp_size, pp_size, dp_size, moe_tp_size, moe_ep_size, cp_size = parallel_config
             overwritten_model_config = copy.deepcopy(model_config)
             overwritten_model_config.pp_size = pp_size
             overwritten_model_config.tp_size = tp_size
             overwritten_model_config.moe_tp_size = moe_tp_size
             overwritten_model_config.moe_ep_size = moe_ep_size
             overwritten_model_config.attention_dp_size = dp_size
+            overwritten_model_config.cp_size = cp_size
             model = get_model(model_path=model_path, model_config=overwritten_model_config, backend_name=backend)
             sess = InferenceSession(model, database, backend_instance)
 

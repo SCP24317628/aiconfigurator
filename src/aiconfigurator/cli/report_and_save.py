@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import dataclasses
 import json
 import logging
 import os
@@ -13,12 +14,13 @@ import yaml
 from prettytable import PrettyTable
 
 from aiconfigurator.generator.api import (
-    generate_backend_artifacts,
+    generate_from_request,
     get_default_dynamo_version_mapping,
     load_generator_overrides_from_args,
     resolve_backend_version_for_dynamo,
 )
 from aiconfigurator.generator.module_bridge import task_config_to_generator_config
+from aiconfigurator.generator.request import from_legacy_params
 from aiconfigurator.logging_utils import _cli_bold, _cli_underline
 from aiconfigurator.sdk import pareto_analysis
 from aiconfigurator.sdk.pareto_analysis import draw_pareto_to_string
@@ -85,14 +87,18 @@ def _plot_worker_setup_table(
     if config_df is None or config_df.empty:
         return ""
 
-    config_df["tokens/s/gpu_cluster"] = (
-        config_df["tokens/s/gpu"]
-        * (total_gpus // config_df["num_total_gpus"])
-        * config_df["num_total_gpus"]
-        / total_gpus
-        if total_gpus > 0
-        else 0
-    )
+    config_df = config_df.copy()
+    if "replicas_needed" in config_df.columns:
+        config_df["tokens/s/gpu_cluster"] = config_df["tokens/s/gpu"]
+    else:
+        config_df["tokens/s/gpu_cluster"] = (
+            config_df["tokens/s/gpu"]
+            * (total_gpus // config_df["num_total_gpus"])
+            * config_df["num_total_gpus"]
+            / total_gpus
+            if total_gpus > 0
+            else 0
+        )
     constraint_col = "tpot"
     constraint_target = tpot_target
     constraint_label = "TPOT"
@@ -100,20 +106,28 @@ def _plot_worker_setup_table(
         constraint_col = "request_latency"
         constraint_target = request_latency_target
         constraint_label = "request latency"
-    top_configs = (
-        config_df[config_df[constraint_col] <= constraint_target]
-        .sort_values(by="tokens/s/gpu_cluster", ascending=False)
-        .head(top)
-        .copy()
-    )
+    if constraint_target is not None and constraint_target > 0:
+        top_configs = config_df[config_df[constraint_col] <= constraint_target].copy()
+    else:
+        top_configs = config_df.copy()
+    if "replicas_needed" in top_configs.columns:
+        top_configs = top_configs.sort_values(by="total_gpus_needed", ascending=True)
+    else:
+        top_configs = top_configs.sort_values(by="tokens/s/gpu_cluster", ascending=False)
+    top_configs = top_configs.head(top).copy()
 
     if top_configs.empty:
         return f"\nNo configurations for {exp_name} met the {constraint_label} constraint."
 
-    top_configs["replicas"] = total_gpus // top_configs["num_total_gpus"]
-    top_configs["total_gpus_used"] = top_configs["num_total_gpus"] * top_configs["replicas"]
+    if "replicas_needed" in top_configs.columns:
+        top_configs["replicas"] = top_configs["replicas_needed"].astype(int)
+        top_configs["total_gpus_used"] = top_configs["total_gpus_needed"].astype(int)
+    else:
+        top_configs["replicas"] = total_gpus // top_configs["num_total_gpus"]
+        top_configs["total_gpus_used"] = top_configs["num_total_gpus"] * top_configs["replicas"]
 
-    buf.append(f"\n{exp_name} Top Configurations: (Sorted by tokens/s/gpu)")
+    ranking_label = "total_gpus_needed" if "replicas_needed" in top_configs.columns else "tokens/s/gpu"
+    buf.append(f"\n{exp_name} Top Configurations: (Ranked by {ranking_label})")
     table = PrettyTable()
 
     # Check if it is disagg config by checking for prefill/decode specific columns
@@ -147,6 +161,8 @@ def _plot_worker_setup_table(
             field_names.append("power_w")
         table.field_names = field_names
         for i, row in enumerate(top_configs.to_dict("records")):
+            display_total_gpus = row["total_gpus_used"] if "replicas_needed" in row else total_gpus
+            display_concurrency = row["concurrency"] * row["replicas"]
             if is_moe:
                 p_parallel = (
                     f"tp{_cli_underline(str(row['(p)tp']))}"
@@ -201,8 +217,8 @@ def _plot_worker_setup_table(
                     f"{row['cluster_request_rate']:.2f}",
                     f"{row['ttft']:.2f}",
                     f"{row['request_latency']:.2f}",
-                    f"{row['concurrency'] * row['replicas']} (={row['concurrency']}x{row['replicas']})",
-                    f"{total_gpus} ({row['total_gpus_used']}={row['replicas']}x{row['num_total_gpus']})",
+                    f"{display_concurrency} (={row['concurrency']}x{row['replicas']})",
+                    f"{display_total_gpus} ({row['total_gpus_used']}={row['replicas']}x{row['num_total_gpus']})",
                     row["replicas"],
                     gpus_replica_str,
                     row["(p)workers"],
@@ -239,6 +255,8 @@ def _plot_worker_setup_table(
             field_names.append("power_w")
         table.field_names = field_names
         for i, row in enumerate(top_configs.to_dict("records")):
+            display_total_gpus = row["total_gpus_used"] if "replicas_needed" in row else total_gpus
+            display_concurrency = row["concurrency"] * row["replicas"]
             if is_moe:
                 parallel = (
                     f"tp{_cli_underline(str(row['tp']))}"
@@ -255,7 +273,7 @@ def _plot_worker_setup_table(
             else:
                 parallel = f"tp{_cli_underline(str(row['tp']))}pp{_cli_underline(str(row['pp']))}"
                 gpus_worker = (
-                    f"{row['pp'] * row['tp']} (={_cli_underline(str(row['tp']))}x{_cli_underline(str(row['pp']))}"
+                    f"{row['pp'] * row['tp']} (={_cli_underline(str(row['tp']))}x{_cli_underline(str(row['pp']))})"
                 )
             row_data = [
                 i + 1,
@@ -268,8 +286,8 @@ def _plot_worker_setup_table(
                     f"{row['cluster_request_rate']:.2f}",
                     f"{row['ttft']:.2f}",
                     f"{row['request_latency']:.2f}",
-                    f"{row['concurrency'] * row['replicas']} (={row['concurrency']}x{row['replicas']})",
-                    f"{total_gpus} ({row['total_gpus_used']}={row['replicas']}x{row['num_total_gpus']})",
+                    f"{display_concurrency} (={row['concurrency']}x{row['replicas']})",
+                    f"{display_total_gpus} ({row['total_gpus_used']}={row['replicas']}x{row['num_total_gpus']})",
                     row["replicas"],
                     row["num_total_gpus"],
                     gpus_worker,
@@ -335,7 +353,8 @@ def log_final_summary(
         chosen_task = tasks[chosen_exp]
 
     summary_box.append(f"    Model: {chosen_task.primary_model_path} (is_moe: {chosen_task.is_moe})")
-    summary_box.append(f"    Total GPUs: {chosen_task.total_gpus}")
+    if not load_match:
+        summary_box.append(f"    Total GPUs: {chosen_task.total_gpus}")
 
     if load_match:
         # Load-match mode summary
@@ -359,17 +378,17 @@ def log_final_summary(
     elif mode == "default":
         agg_value = best_throughputs.get("agg", 0.0)
         disagg_value = best_throughputs.get("disagg", 0.0)
-        if agg_value > 0 and disagg_value > 0:
-            benefit_ratio = disagg_value / agg_value
-        elif agg_value == 0 and disagg_value > 0:
-            benefit_ratio = float("inf")
-        elif agg_value > 0 and disagg_value == 0:
-            benefit_ratio = 0.0
+        if "agg" in best_throughputs and "disagg" in best_throughputs:
+            if agg_value == disagg_value:
+                comparison = "agg and disagg tied"
+            else:
+                winner, loser = ("agg", "disagg") if agg_value >= disagg_value else ("disagg", "agg")
+                loser_value = best_throughputs[loser]
+                benefit_ratio = float("inf") if loser_value == 0 else best_throughputs[winner] / loser_value
+                comparison = f"{winner} {benefit_ratio:.2f}x better than {loser}"
+            bold_msg = _cli_bold(f"{chosen_exp} at {best_throughputs[chosen_exp]:.2f} tokens/s/gpu ({comparison})")
         else:
-            benefit_ratio = 0.0  # handle case where both are 0
-        bold_msg = _cli_bold(
-            f"{chosen_exp} at {best_throughputs[chosen_exp]:.2f} tokens/s/gpu (disagg {benefit_ratio:.2f}x better)"
-        )
+            bold_msg = _cli_bold(f"{chosen_exp} at {best_throughputs[chosen_exp]:.2f} tokens/s/gpu")
         summary_box.append(f"    Best Experiment Chosen: {bold_msg}")
     else:
         bold_msg = _cli_bold(f"{chosen_exp} at {best_throughputs[chosen_exp]:.2f} tokens/s/gpu")
@@ -382,48 +401,71 @@ def log_final_summary(
     best_config_df = display_best_configs[chosen_exp]
     best_throughput = best_throughputs[chosen_exp]
 
-    summary_box.append(f"    - Best Throughput: {best_throughput * chosen_task.total_gpus:,.2f} tokens/s")
-    summary_box.append(f"    - Per-GPU Throughput: {best_throughput:.2f} tokens/s/gpu")
     if not best_config_df.empty:
         best_conf_details = best_config_df.iloc[0]
+        if load_match and "replicas_needed" in best_conf_details.index:
+            per_gpu = float(best_conf_details["tokens/s/gpu"])
+            display_total_gpus = int(best_conf_details["total_gpus_needed"])
+            total_throughput = per_gpu * display_total_gpus
+        else:
+            per_gpu = best_throughput
+            display_total_gpus = chosen_task.total_gpus
+            total_throughput = best_throughput * display_total_gpus
+        summary_box.append(f"    - Best Throughput: {total_throughput:,.2f} tokens/s")
+        summary_box.append(f"    - Per-GPU Throughput: {per_gpu:.2f} tokens/s/gpu")
         summary_box.append(f"    - Per-User Throughput: {best_conf_details['tokens/s/user']:.2f} tokens/s/user")
-        replicas = chosen_task.total_gpus // int(best_conf_details["num_total_gpus"])
-        cluster_rr = float(best_conf_details["request_rate"]) * replicas
+        if load_match and "replicas_needed" in best_conf_details.index:
+            cluster_rr = float(best_conf_details["request_rate"]) * int(best_conf_details["replicas_needed"])
+        else:
+            replicas = chosen_task.total_gpus // int(best_conf_details["num_total_gpus"])
+            cluster_rr = float(best_conf_details["request_rate"]) * replicas
         summary_box.append(f"    - Request Rate: {cluster_rr:.2f} req/s")
         summary_box.append(f"    - TTFT: {best_conf_details['ttft']:.2f}ms")
         summary_box.append(f"    - TPOT: {best_conf_details['tpot']:.2f}ms")
         summary_box.append(f"    - Request Latency: {best_conf_details['request_latency']:.2f}ms")
+    else:
+        summary_box.append(f"    - Best Throughput: {best_throughput * chosen_task.total_gpus:,.2f} tokens/s")
+        summary_box.append(f"    - Per-GPU Throughput: {best_throughput:.2f} tokens/s/gpu")
     summary_box.append("  " + "-" * 76)
 
     # ============================= pareto frontier
     pareto_plot_buf = ""
     if len(display_pareto_fronts) <= 10:  # avoid overly crowded plots
-        summary_box.append("  Pareto Frontier:")
         target_x_axis = "tokens/s/user"
+        target_y_axis = "tokens/s/gpu_cluster"
         if pareto_x_axis:
             target_x_axis = pareto_x_axis.get(chosen_exp, target_x_axis)
         series_payload = []
-        for name, df in display_pareto_fronts.items():
-            if df is None or df.empty:
-                continue
-            series_axis = pareto_x_axis.get(name, target_x_axis) if pareto_x_axis else target_x_axis
-            if series_axis != target_x_axis:
-                continue
-            series_payload.append({"df": df, "label": name})
-        highlight_series = None
-        if not best_config_df.empty:
-            highlight_series = {
-                "df": best_config_df.head(1),
-                "label": f"{chosen_exp} best",
-            }
-        pareto_plot_buf = draw_pareto_to_string(
-            f"{chosen_task.primary_model_path} Pareto Frontier",
-            series_payload,
-            highlight=highlight_series,
-            x_label=target_x_axis,
-            y_label="tokens/s/gpu_cluster",
-        )
-        summary_box.append(pareto_plot_buf)
+        if target_x_axis != target_y_axis:
+            for name, df in display_pareto_fronts.items():
+                if df is None or df.empty:
+                    continue
+                series_x_axis = pareto_x_axis.get(name, target_x_axis) if pareto_x_axis else target_x_axis
+                if series_x_axis != target_x_axis:
+                    continue
+                if target_x_axis not in df.columns or target_y_axis not in df.columns:
+                    continue
+                series_payload.append({"df": df, "label": name})
+        if series_payload:
+            summary_box.append("  Pareto Frontier:")
+            highlight_series = None
+            if (
+                not best_config_df.empty
+                and target_x_axis in best_config_df.columns
+                and target_y_axis in best_config_df.columns
+            ):
+                highlight_series = {
+                    "df": best_config_df.head(1),
+                    "label": f"{chosen_exp} selected",
+                }
+            pareto_plot_buf = draw_pareto_to_string(
+                f"{chosen_task.primary_model_path} Pareto Frontier",
+                series_payload,
+                highlight=highlight_series,
+                x_label=target_x_axis,
+                y_label=target_y_axis,
+            )
+            summary_box.append(pareto_plot_buf)
     summary_box.append("  " + "-" * 76)
 
     # ============================= deployment details
@@ -665,6 +707,21 @@ def save_results(
                 # generated backend versions for each backend, empty unless --generator-dynamo-version is provided
                 generated_backend_versions = {}
 
+            # Search / perf-DB version echo: the performance data the sweep ran
+            # against (search fidelity). This is distinct from the generated /
+            # deployed config version shown in the box below -- the two axes are
+            # decoupled (set via --perf-db-version; default: latest).
+            logger.warning(
+                "\n" + "=" * 80 + "\n"
+                "  🔍  Search / perf-DB version (simulation fidelity)\n" + "=" * 80 + "\n"
+                "  Experiment: %s\n"
+                "  Perf-DB version: %s   (--perf-db-version; default: latest)\n"
+                "  This is what the search simulated against; it may differ from the\n"
+                "  generated/deployed config version shown next.\n" + "=" * 80,
+                exp_name,
+                backend_version_str or "latest",
+            )
+
             # case #1: --generated-config-version is provided
             if generated_backend_version:
                 effective_generated_version = generated_backend_version
@@ -734,7 +791,7 @@ def save_results(
                     )
 
                 # Set version source based on deployment target
-                if deployment_target == "llm-d":
+                if deployment_target == "llm-d-helm":
                     version_source = "template defaults"
                 else:
                     version_source = f"dynamo {default_dynamo_version}"
@@ -801,13 +858,21 @@ def save_results(
 
                     try:
                         deployment_target = getattr(args, "deployment_target", "dynamo-j2")
-                        generate_backend_artifacts(
-                            params=cfg,
-                            backend=row_task.primary_backend_name,
-                            backend_version=row_backend_version,
-                            output_dir=top_config_dir,
-                            deployment_target=deployment_target,
+                        # Render through the typed request path. `cfg` (dumped to
+                        # generator_config.yaml above) is the dict bridge output;
+                        # lowering its request reproduces byte-identical artifacts
+                        # (the request round-trip gate), so this is output-neutral.
+                        req = from_legacy_params(cfg, backend=row_task.primary_backend_name)
+                        req = dataclasses.replace(
+                            req,
+                            backend=dataclasses.replace(req.backend, generated_config_version=row_backend_version),
+                            emit=dataclasses.replace(
+                                req.emit,
+                                deployment_target=deployment_target,
+                                output_dir=top_config_dir,
+                            ),
                         )
+                        generate_from_request(req)
                     except Exception as exc:
                         logger.warning(
                             "Failed to generate backend config from aic generator: %s, %s",

@@ -4,15 +4,9 @@
 
 # Modified from https://github.com/vllm-project/vllm/blob/v0.11.0/tests/v1/attention/utils.py
 
-"""Shared vLLM collector test harness utilities.
-
-Adapted from vLLM's attention test helpers, this module builds minimal vLLM
-configs, KV-cache specs, distributed setup contexts, cache-population helpers,
-and backend compatibility shims used by the vLLM collectors.
-"""
+"""Shared vLLM 0.24.0 collector test-harness utilities."""
 
 import functools
-import inspect
 import os
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -20,11 +14,6 @@ from functools import wraps
 from typing import Optional, Union
 
 import torch
-
-try:
-    from vllm.attention.backends.registry import AttentionBackendEnum
-except ImportError:
-    AttentionBackendEnum = None  # type: ignore
 from vllm import _custom_ops as ops
 from vllm.config import (
     CacheConfig,
@@ -37,34 +26,14 @@ from vllm.config import (
     VllmConfig,
     set_current_vllm_config,
 )
-
-try:
-    from vllm.config.model import ModelDType
-except Exception:  # pragma: no cover - compatibility with older vLLM installs
-    from typing import Union as _Union
-
-    ModelDType = _Union[str, torch.dtype]  # type: ignore[misc]
-from vllm.platforms import current_platform
-
-try:
-    from vllm.platforms import _Backend  # type: ignore
-except Exception:
-    _Backend = None  # type: ignore
-
-try:
-    from vllm.utils import STR_DTYPE_TO_TORCH_DTYPE, cdiv, resolve_obj_by_qualname
-except ImportError:
-    # Compatibility with newer vLLM where these live in submodules
-    from vllm.utils.import_utils import resolve_obj_by_qualname  # type: ignore
-    from vllm.utils.math_utils import cdiv  # type: ignore
-    from vllm.utils.torch_utils import STR_DTYPE_TO_TORCH_DTYPE  # type: ignore
-
+from vllm.config.model import ModelDType
 from vllm.distributed import init_distributed_environment
 from vllm.distributed.parallel_state import ensure_model_parallel_initialized
+from vllm.utils.math_utils import cdiv
+from vllm.utils.torch_utils import STR_DTYPE_TO_TORCH_DTYPE, kv_cache_dtype_str_to_dtype
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
-from vllm.v1.kv_cache_interface import FullAttentionSpec
-
-_COMMON_ATTN_METADATA_PARAMS = set(inspect.signature(CommonAttentionMetadata).parameters)
+from vllm.v1.kv_cache_interface import FullAttentionSpec, SlidingWindowSpec, get_kv_quant_mode
 
 
 class MockAttentionLayer:
@@ -140,87 +109,45 @@ def create_common_attn_metadata(
     # Calculate max query length
     max_query_len = max(batch_spec.query_lens)
 
-    metadata_kwargs = {
-        "query_start_loc": query_start_loc,
-        "query_start_loc_cpu": query_start_loc_cpu,
-        "seq_lens": seq_lens,
-        "num_reqs": batch_spec.batch_size,
-        "num_actual_tokens": num_tokens,
-        "max_query_len": max_query_len,
-        "max_seq_len": max_seq_len,
-        "block_table_tensor": block_table_tensor,
-        "slot_mapping": slot_mapping,
-        "causal": True,
-    }
-    if "seq_lens_cpu_upper_bound" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["seq_lens_cpu_upper_bound"] = seq_lens_cpu
-    if "_seq_lens_cpu" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["_seq_lens_cpu"] = seq_lens_cpu
-    elif "seq_lens_cpu" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["seq_lens_cpu"] = seq_lens_cpu
-    if "_num_computed_tokens_cpu" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["_num_computed_tokens_cpu"] = num_computed_tokens_cpu
-    elif "num_computed_tokens_cpu" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["num_computed_tokens_cpu"] = num_computed_tokens_cpu
-    if "seq_start_loc_cpu" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["seq_start_loc_cpu"] = None
-    if "seq_start_loc" in _COMMON_ATTN_METADATA_PARAMS:
-        metadata_kwargs["seq_start_loc"] = None
-    return CommonAttentionMetadata(**metadata_kwargs)
+    return CommonAttentionMetadata(
+        query_start_loc=query_start_loc,
+        query_start_loc_cpu=query_start_loc_cpu,
+        seq_lens=seq_lens,
+        seq_lens_cpu_upper_bound=seq_lens_cpu,
+        _seq_lens_cpu=seq_lens_cpu,
+        _num_computed_tokens_cpu=num_computed_tokens_cpu,
+        num_reqs=batch_spec.batch_size,
+        num_actual_tokens=num_tokens,
+        max_query_len=max_query_len,
+        max_seq_len=max_seq_len,
+        block_table_tensor=block_table_tensor,
+        slot_mapping=slot_mapping,
+        causal=True,
+    )
 
 
 def get_attention_backend(backend_name: AttentionBackendEnum):
-    """Set up attention backend classes for testing (new and legacy)."""
-    # Newer API: AttentionBackendEnum with get_class()
-    try:
-        backend_class = backend_name.get_class()
-        return backend_class.get_builder_cls(), backend_class.get_impl_cls()
-    except Exception:
-        pass
-
-    # Legacy API: _Backend enum with manual mapping
-    if _Backend is not None and isinstance(backend_name, _Backend):
-        if torch.xpu.is_available():
-            backend_map = {
-                _Backend.FLASH_ATTN_VLLM_V1: "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend",
-            }
-        else:
-            backend_map = {
-                _Backend.FLASH_ATTN: (
-                    "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
-                    if current_platform.is_cuda()
-                    else "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionBackend"
-                ),
-                _Backend.FLASHINFER: "vllm.v1.attention.backends.flashinfer.FlashInferBackend",
-                _Backend.FLEX_ATTENTION: "vllm.v1.attention.backends.flex_attention.FlexAttentionBackend",
-                _Backend.TRITON_ATTN: "vllm.v1.attention.backends.triton_attn.TritonAttentionBackend",
-                _Backend.TREE_ATTN: "vllm.v1.attention.backends.tree_attn.TreeAttentionBackend",
-                _Backend.XFORMERS: "vllm.v1.attention.backends.xformers.XFormersAttentionBackend",
-                _Backend.CUTLASS_MLA: "vllm.v1.attention.backends.mla.cutlass_mla.CutlassMLABackend",
-                _Backend.FLASHMLA: "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend",
-                _Backend.FLASH_ATTN_MLA: "vllm.v1.attention.backends.mla.flashattn_mla.FlashAttnMLABackend",
-                _Backend.FLASHINFER_MLA: "vllm.v1.attention.backends.mla.flashinfer_mla.FlashInferMLABackend",
-                _Backend.TRITON_MLA: "vllm.v1.attention.backends.mla.triton_mla.TritonMLABackend",
-            }
-
-        if backend_name not in backend_map:
-            raise ValueError(f"Unknown backend: {backend_name}")
-        backend_class_name = backend_map[backend_name]
-        backend_class = resolve_obj_by_qualname(backend_class_name)
-        return backend_class.get_builder_cls(), backend_class.get_impl_cls()
-
-    raise ValueError(f"Unsupported backend type: {backend_name}")
+    """Return vLLM 0.24.0 metadata-builder and implementation classes."""
+    backend_class = backend_name.get_class()
+    return backend_class.get_builder_cls(), backend_class.get_impl_cls()
 
 
-def create_standard_kv_cache_spec(vllm_config: VllmConfig, use_fp8_kv_cache: bool = False) -> FullAttentionSpec:
-    """Create a FullAttentionSpec from ModelParams only."""
-    return FullAttentionSpec(
+def create_standard_kv_cache_spec(
+    vllm_config: VllmConfig, use_fp8_kv_cache: bool = False
+) -> FullAttentionSpec | SlidingWindowSpec:
+    """Create the KV-cache spec used by vLLM's production attention layer."""
+    spec_kwargs = dict(
         block_size=vllm_config.cache_config.block_size,
         num_kv_heads=vllm_config.model_config.get_num_kv_heads(vllm_config.parallel_config),
         head_size=vllm_config.model_config.get_head_size(),
-        dtype=current_platform.fp8_dtype() if use_fp8_kv_cache else vllm_config.model_config.dtype,
-        sliding_window=vllm_config.model_config.get_sliding_window(),
+        head_size_v=vllm_config.model_config.get_head_size(),
+        dtype=kv_cache_dtype_str_to_dtype(vllm_config.cache_config.cache_dtype, vllm_config.model_config),
+        kv_quant_mode=get_kv_quant_mode(vllm_config.cache_config.cache_dtype),
     )
+    sliding_window = vllm_config.model_config.get_sliding_window()
+    if sliding_window is not None:
+        return SlidingWindowSpec(sliding_window=sliding_window, **spec_kwargs)
+    return FullAttentionSpec(**spec_kwargs)
 
 
 def create_vllm_config(
@@ -254,18 +181,10 @@ def create_vllm_config(
         max_model_len=max_model_len,
     )
 
-    try:
-        cache_config = CacheConfig(
-            block_size=block_size,
-            cache_dtype="fp8" if use_fp8_kv_cache else "auto",
-            swap_space=0,
-        )
-    except (TypeError, Exception):
-        # vLLM >=0.19.0 removed swap_space from CacheConfig
-        cache_config = CacheConfig(
-            block_size=block_size,
-            cache_dtype="fp8" if use_fp8_kv_cache else "auto",
-        )
+    cache_config = CacheConfig(
+        block_size=block_size,
+        cache_dtype="fp8" if use_fp8_kv_cache else "auto",
+    )
     # Set cache blocks for testing
     #   (these may be set during initialization normally)
     cache_config.num_gpu_blocks = num_gpu_blocks
@@ -287,6 +206,13 @@ def create_vllm_config(
     device_config = DeviceConfig()
     load_config = LoadConfig()
     compilation_config = CompilationConfig()
+    # Module-level benchmarks run eagerly (no torch.compile), so without this
+    # every CustomOp (rotary, activations, ...) falls back to its native
+    # decomposed implementation — a batch-independent per-call overhead the
+    # serving engine does not pay (inductor fuses these under compilation).
+    # Enable the CUDA custom ops so eager module forwards match engine
+    # execution. See enable_engine_fused_ops() for the IR-op counterpart.
+    compilation_config.custom_ops = ["all"]
 
     if add_mock_model_methods:
         # Add mock methods to satisfy backends that need them
@@ -311,25 +237,15 @@ def create_vllm_config(
     if head_dim is not None:
         model_config.hf_config.head_dim = head_dim
         model_config.model_arch_config.head_size = head_dim
-    # ModelConfig.model_arch_config is built once from hf_config in __init__,
-    # so mutating hf_config alone leaves the cached arch values stale. Backends
-    # such as the V1 FA3 builder read num_heads/kv_heads via
-    # ModelConfig.get_num_attention_heads / get_num_kv_heads, which look at
-    # model_arch_config — without these overrides the AOT scheduler builds
-    # scheduler_metadata for the fake model's defaults (16 q-heads / 8 kv-heads)
-    # while the kernel call runs with the test's actual head counts, and FA3's
-    # shape check rejects the mismatched scheduler_metadata. The hasattr guards
-    # let this degrade gracefully on older vLLM where the attribute names may
-    # differ (the FA3 bug only exists from vllm>=0.19 anyway).
-    arch_cfg = getattr(model_config, "model_arch_config", None)
+    # ModelConfig.model_arch_config is built once in __init__, so keep its
+    # cached head counts aligned with the fake HF config used by this harness.
+    arch_cfg = model_config.model_arch_config
     if num_heads is not None:
         model_config.hf_config.num_attention_heads = num_heads
-        if arch_cfg is not None and hasattr(arch_cfg, "total_num_attention_heads"):
-            arch_cfg.total_num_attention_heads = num_heads
+        arch_cfg.total_num_attention_heads = num_heads
     if num_kv_heads is not None:
         model_config.hf_config.num_key_value_heads = num_kv_heads
-        if arch_cfg is not None and hasattr(arch_cfg, "total_num_kv_heads"):
-            arch_cfg.total_num_kv_heads = num_kv_heads
+        arch_cfg.total_num_kv_heads = num_kv_heads
 
     return VllmConfig(
         model_config=model_config,
@@ -416,7 +332,10 @@ def create_and_prepopulate_kv_cache_mla(
     block_table = common_attn_metadata.block_table_tensor
     slot_mapping = common_attn_metadata.slot_mapping
 
-    use_fp8_ds_mla = kv_cache_dtype == "fp8_ds_mla"
+    cache_dtype_str = kv_cache_dtype or "auto"
+    use_fp8_ds_mla = cache_dtype_str == "fp8_ds_mla"
+    scale_tensor = scale if isinstance(scale, torch.Tensor) else torch.tensor(scale, dtype=torch.float32, device=device)
+    scale_tensor = scale_tensor.to(device=device, dtype=torch.float32)
 
     if use_fp8_ds_mla:
         if not kv_c_contexts:
@@ -425,14 +344,9 @@ def create_and_prepopulate_kv_cache_mla(
         rope_dim = k_pe_contexts[0].shape[-1]
         entry_size = kv_lora_rank + 4 * 4 + 2 * rope_dim
         kv_cache = torch.zeros(num_blocks, block_size, entry_size, dtype=torch.uint8, device=device)
-        scale_tensor = (
-            scale if isinstance(scale, torch.Tensor) else torch.tensor(scale, dtype=torch.float32, device=device)
-        )
-        scale_tensor = scale_tensor.to(device=device, dtype=torch.float32)
     else:
         # Create MLA KV cache: (num_blocks, block_size, head_size)
         kv_cache = torch.empty(num_blocks, block_size, head_size, dtype=dtype, device=device)
-        kv_cache_flat = kv_cache.view(-1, head_size)
 
     # Populate the cache with the context tokens
     # Start from block_id=1 since block_id=0 is considered the null block
@@ -446,46 +360,34 @@ def create_and_prepopulate_kv_cache_mla(
 
         start = start_block_idx * block_size
 
-        if use_fp8_ds_mla:
-            slots = torch.arange(context_len, device=device, dtype=torch.long) + start
-            ops.concat_and_cache_mla(
-                kv_c_context,
-                k_pe_context.squeeze(1),
-                kv_cache,
-                slots,
-                kv_cache_dtype="fp8_ds_mla",
-                scale=scale_tensor,
-            )
-        else:
-            kv_context = torch.cat([kv_c_context, k_pe_context.squeeze(1)], dim=-1)
-            end = start + kv_context.shape[0]
-            kv_cache_flat[start:end, ...] = kv_context
+        # This is the production MLAAttentionImpl cache writer. Standard FP8
+        # cache storage is uint8, so direct tensor assignment would perform an
+        # integer cast instead of writing encoded FP8 bytes.
+        slots = torch.arange(context_len, device=device, dtype=torch.long) + start
+        ops.concat_and_cache_mla(
+            kv_c_context,
+            k_pe_context.squeeze(1),
+            kv_cache,
+            slots,
+            kv_cache_dtype=cache_dtype_str,
+            scale=scale_tensor,
+        )
 
         # Stay block aligned and allocate enough blocks for the new tokens
         start_block_idx += cdiv(int(seq_lens[i]), block_size)
 
     blocks_end = start_block_idx
 
-    # Permute the context blocks (excluding block 0 which is null)
+    # Permute the context blocks (excluding block 0 which is null). Avoid an
+    # identity advanced-index copy when the caller requests sequential blocks;
+    # that copy can temporarily duplicate tens of GiB for long MLA sequences.
     if randomize_blocks:
         perm = torch.randperm(blocks_end - 1) + 1  # Random permutation starting from block 1
-    else:
-        perm = torch.arange(1, blocks_end)  # Sequential order starting from block 1
-
-    inv_perm = torch.zeros(blocks_end, dtype=torch.long, device=device)
-    inv_perm[1:] = torch.argsort(perm) + 1  # Add 1 to account for starting from block 1
-
-    # Workaround for XPU FP8 indexing not implemented:
-    # Intel Extension for PyTorch (IPEX) currently lacks support for advanced
-    # indexing (slicing via LongTensor) on Float8 tensors ("index_xpu" not implemented).
-    # To bypass this, we temporarily cast the KV cache to bfloat16, perform the
-    # permutation, and then cast it back to the original FP8 format.
-    if "xpu" in str(device) and kv_cache.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-        temp_cache = kv_cache.to(torch.bfloat16)
-        temp_cache_sliced = temp_cache[perm, ...]
-        kv_cache[1:blocks_end, ...] = temp_cache_sliced.to(kv_cache.dtype)
-    else:
+        inv_perm = torch.zeros(blocks_end, dtype=torch.long, device=device)
+        inv_perm[1:] = torch.argsort(perm) + 1  # Add 1 to account for starting from block 1
         kv_cache[1:blocks_end, ...] = kv_cache[perm, ...]
+    else:
+        inv_perm = torch.arange(blocks_end, dtype=torch.long, device=device)
 
     # Construct the right block table
     # Start from block_id=1 since block_id=0 is considered the null block
@@ -509,9 +411,7 @@ def create_and_prepopulate_kv_cache_mla(
     return kv_cache
 
 
-def create_and_prepopulate_kv_cache(
-    k_contexts: list[torch.Tensor],
-    v_contexts: list[torch.Tensor],
+def create_kv_cache_and_block_mappings(
     block_size: int,
     num_kv_heads: int,
     head_size: int,
@@ -520,27 +420,24 @@ def create_and_prepopulate_kv_cache(
     num_blocks: int,
     common_attn_metadata: CommonAttentionMetadata,
     randomize_blocks: bool = True,
-) -> torch.Tensor:
-    """Create and prepopulate a KV cache with context data.
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Create an empty KV cache and its history/query block mappings.
 
     Args:
-        k_contexts: List of key context tensors for each sequence
-        v_contexts: List of value context tensors for each sequence
-        seq_lens: List of sequence lengths
         block_size: Size of each block
         num_kv_heads: Number of KV heads
         head_size: Size of each head
         dtype: Data type for the cache
         device: Device to create the cache on
         num_blocks: Total number of blocks in the cache
-        block_table: Block table tensor to populate
+        common_attn_metadata: Attention metadata whose mappings are populated
         randomize_blocks: Whether to randomly permute blocks
                           or use sequential order
 
     Returns:
-        Tuple of (kv_cache, updated_block_table)
+        Tuple of the empty KV cache and flattened history slot mapping
     """
-    batch_size = len(k_contexts)
+    batch_size = common_attn_metadata.num_reqs
     seq_lens = common_attn_metadata.seq_lens_cpu
     query_lens = common_attn_metadata.query_start_loc_cpu[1:] - common_attn_metadata.query_start_loc_cpu[:-1]
     context_lens = common_attn_metadata.num_computed_tokens_cpu
@@ -549,46 +446,22 @@ def create_and_prepopulate_kv_cache(
 
     # Create KV cache
     kv_cache = torch.empty(2, num_blocks, block_size, num_kv_heads, head_size, dtype=dtype, device=device)
-    kv_cache_flat = kv_cache.view(2, -1, num_kv_heads, head_size)
 
-    # Populate the cache with the context tokens
-    # Start from block_id=1 since block_id=0 is considered the null block
+    # Reserve enough block IDs for each full runtime sequence. Block 0 is the
+    # null block, so usable IDs start at 1.
     start_block_idx = 1
     for i in range(batch_size):
-        k_context, v_context = k_contexts[i], v_contexts[i]
-        start = start_block_idx * block_size
-        end = start + k_context.shape[0]
-        kv_cache_flat[0, start:end, ...] = k_context
-        kv_cache_flat[1, start:end, ...] = v_context
-
-        # Stay block aligned and allocate enough blocks for the new tokens
         start_block_idx += cdiv(int(seq_lens[i]), block_size)
 
     blocks_end = start_block_idx
 
-    # Permute the context blocks (excluding block 0 which is null)
+    # Randomize physical block IDs without copying the still-empty cache.
     if randomize_blocks:
-        # Random permutation starting from block 1
-        perm = torch.randperm(blocks_end - 1) + 1
+        perm = torch.randperm(blocks_end - 1, device=device) + 1
+        inv_perm = torch.zeros(blocks_end, dtype=torch.long, device=device)
+        inv_perm[1:] = torch.argsort(perm) + 1
     else:
-        # Sequential order starting from block 1
-        perm = torch.arange(1, blocks_end)
-
-    inv_perm = torch.zeros(blocks_end, dtype=torch.long, device=device)
-    # Add 1 to account for starting from block 1
-    inv_perm[1:] = torch.argsort(perm) + 1
-
-    # Workaround for XPU FP8 indexing not implemented:
-    # Intel Extension for PyTorch (IPEX) currently lacks support for advanced
-    # indexing (slicing via LongTensor) on Float8 tensors ("index_xpu" not implemented).
-    # To bypass this, we temporarily cast the KV cache to bfloat16, perform the
-    # permutation, and then cast it back to the original FP8 format.
-    if "xpu" in str(device) and kv_cache.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-        temp_cache = kv_cache.to(torch.bfloat16)
-        temp_cache_sliced = temp_cache[:, perm, ...]
-        kv_cache[:, 1:blocks_end, ...] = temp_cache_sliced.to(kv_cache.dtype)
-    else:
-        kv_cache[:, 1:blocks_end, ...] = kv_cache[:, perm, ...]
+        inv_perm = torch.arange(blocks_end, dtype=torch.long, device=device)
 
     # Construct the right block table
     # Start from block_id=1 since block_id=0 is considered the null block
@@ -600,16 +473,93 @@ def create_and_prepopulate_kv_cache(
         block_table[i, :num_blocks_for_seq] = inv_perm[start:end]
         start_block_idx += num_blocks_for_seq
 
-        # Create a realistic slot mapping that corresponds to the block table
+    # Create realistic query and history slot mappings from the same table.
+    history_slot_mappings = []
     for i in range(batch_size):
-        token_offsets = torch.arange(int(query_lens[i])) + int(context_lens[i])
+        token_offsets = torch.arange(int(query_lens[i]), dtype=torch.long, device=device) + int(context_lens[i])
         block_indices = token_offsets // block_size
         token_inter_block_offsets = token_offsets % block_size
         start = common_attn_metadata.query_start_loc_cpu[i]
         end = common_attn_metadata.query_start_loc_cpu[i + 1]
-        slot_mapping[start:end] = block_table[i, block_indices] * block_size + token_inter_block_offsets.to(device)
+        query_block_ids = block_table[i, block_indices].to(torch.long)
+        slot_mapping[start:end] = query_block_ids * block_size + token_inter_block_offsets
 
-    return kv_cache
+        context_len = int(context_lens[i])
+        if context_len > 0:
+            history_offsets = torch.arange(context_len, dtype=torch.long, device=device)
+            history_block_ids = block_table[i, history_offsets // block_size].to(torch.long)
+            history_slot_mappings.append(history_block_ids * block_size + history_offsets % block_size)
+
+    if history_slot_mappings:
+        history_slot_mapping = torch.cat(history_slot_mappings)
+    else:
+        history_slot_mapping = torch.empty(0, dtype=torch.long, device=device)
+
+    return kv_cache, history_slot_mapping
+
+
+@functools.cache  # only run once per process
+def enable_engine_fused_ops() -> None:
+    """Route IR ops to the fused CUDA kernels a serving worker would run.
+
+    Module-level collectors execute vLLM modeling code eagerly, and no IR-op
+    priority is ever installed outside a real worker, so ``rms_norm`` /
+    ``fused_add_rms_norm`` dispatch to their *native* implementations — an
+    eager ``mean/pow/rsqrt/mul`` kernel chain costing tens of µs per call
+    ("Priority not set for op rms_norm, using native implementation" in every
+    collector log). A serving engine never pays this: under its default
+    compilation config inductor fuses the native implementation into single
+    triton kernels (torch.compile), and in eager/piecewise regions it runs
+    the ``vllm_c`` CUDA kernels. The unfused chain inflates small/medium-batch
+    module latencies by ~25-35% (measured on B200, MLA generation module,
+    heads64/kv8192/fp8: bs1 109.5→78.6 µs, bs16 143.7→95.2 µs, bs64
+    198.6→147.9 µs after this change, matching in-engine per-layer cost
+    within ~10%; see ai-dynamo/aiconfigurator#1396).
+
+    Why not ``torch.compile`` + CUDA graph instead? Outside a serving worker
+    every norm path — including ``forward_native`` — routes through the IR
+    torch custom op (``_ENABLE_TORCH_WRAP = True`` module default,
+    vllm/ir/op.py:50 @0.22.0), which is opaque to dynamo/inductor: compiling
+    through it fuses nothing (B200/vLLM 0.22 glue microbench, CUDA-graph
+    replay with kernel listing: native-eager 74.1 us, compile-through-wrap
+    64.6 us with the aten mean/pow/rsqrt chain intact; vllm_c-eager 21.0 us).
+    The engine escapes this two ways: worker init applies
+    ``ir_enable_torch_wrap`` (v1/worker/worker_base.py:94), and under
+    VLLM_COMPILE+inductor the wrapped op nodes are fused by vLLM's custom
+    lowerings into neighboring GEMMs (serving-trace kernel
+    ``triton_red_fused_..._fused_qkv_a_proj_rms_norm``); wrap-off is the
+    documented way to let dynamo trace the impl inline
+    (config/compilation.py:492-498 @0.22.0). Replicating that here —
+    ``vllm.ir.set_default_torch_wrap(False)`` + ``torch.compile`` — does
+    fuse fully (glue 8.0 us, module 87.7 us/layer) but OVERSHOOTS the
+    engine, whose fused glue is not free (norm+quant fused kernels, paged
+    rope): at the bs16 reference point the engine costs 107 us/layer,
+    vllm_c-eager 95-97 us (-10%), wrap-off-compile 87.7 us (-18%), the
+    native chain +37%. vllm_c-eager is therefore the closer surrogate and
+    needs no per-shape compile during sweeps. Installs it as the
+    process-lifetime default: ``IrOp.set_priority`` is a scoped context
+    manager, ``set_default`` is the permanent API (vllm/ir/op.py @0.24.0).
+
+    Raises on vLLM builds without the IR-op registry or the ``vllm_c``
+    provider — a silent fallback to the native chain would benchmark a kernel
+    path serving never runs and poison the database.
+    """
+    # Imports stay function-scoped on purpose: kernel-level collectors that
+    # never touch this helper must keep importing utils on vLLM builds
+    # without the IR-op registry; module-level benchmarks fail HERE, loudly.
+    import vllm.ir.ops as ir_ops
+    import vllm.kernels.vllm_c  # noqa: F401 — import registers the 'vllm_c' impls
+
+    ir_ops.rms_norm.set_default(["vllm_c"])
+    ir_ops.fused_add_rms_norm.set_default(["vllm_c"])
+    # Assert the provider that will actually run (collector dispatch rule:
+    # persisted rows must describe the invocation that executed). set_default
+    # validates support, but verify the resolved priority explicitly so a
+    # future dispatch change cannot silently fall back to the native chain.
+    for op in (ir_ops.rms_norm, ir_ops.fused_add_rms_norm):
+        selected = [impl.provider for impl in op._priority_impls]
+        if selected[:1] != ["vllm_c"]:
+            raise RuntimeError(f"fused-op dispatch for {op.name} resolved to {selected}, expected vllm_c first")
 
 
 @functools.cache  # only run once per process
@@ -624,8 +574,6 @@ def setup_distributed(device):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(port)
     init_distributed_environment()
-    # vLLM >= 0.14.0 requires set_current_vllm_config() context for
-    # initialize_model_parallel() (https://github.com/vllm-project/vllm/pull/31747).
     with set_current_vllm_config(VllmConfig()):
         ensure_model_parallel_initialized(1, 1)
 

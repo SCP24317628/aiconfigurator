@@ -37,7 +37,9 @@ def perf_database():
 
     # Purge already-imported site-packages version if present
     for key in list(sys.modules.keys()):
-        if key == "aiconfigurator" or key.startswith("aiconfigurator."):
+        if key in {"aiconfigurator", "aiconfigurator_core"} or key.startswith(
+            ("aiconfigurator.", "aiconfigurator_core.")
+        ):
             saved_aiconfigurator_modules[key] = sys.modules.pop(key)
 
     import aiconfigurator.sdk.perf_database as perf_database
@@ -45,7 +47,14 @@ def perf_database():
     importlib.reload(perf_database)
     yield perf_database
 
-    # Restore aiconfigurator modules after the tests in this file finish.
+    # Drop the isolated legacy/canonical module pair, then restore both module
+    # graphs together so imported class references in other test modules do not
+    # point at a reloaded canonical implementation.
+    for key in list(sys.modules.keys()):
+        if key in {"aiconfigurator", "aiconfigurator_core"} or key.startswith(
+            ("aiconfigurator.", "aiconfigurator_core.")
+        ):
+            sys.modules.pop(key)
     sys.modules.update(saved_aiconfigurator_modules)
 
 
@@ -70,7 +79,9 @@ def setup_mock_filesystem(systems_dir: Path, layout: dict) -> None:
                 if version.startswith("."):
                     (backend_dir / version).mkdir(exist_ok=True)
                 else:
-                    (backend_dir / version).mkdir(exist_ok=True)
+                    version_dir = backend_dir / version
+                    version_dir.mkdir(exist_ok=True)
+                    (version_dir / "gemm_perf.parquet").write_text("placeholder\n", encoding="utf-8")
 
 
 # ----------------------------- get_supported_databases -----------------------------
@@ -102,6 +113,60 @@ def test_get_supported_databases_skips_incomplete_versions(temp_systems_dir: Pat
 
     assert result["h100"]["vllm"] == ["0.14.0"]
     assert perf_database.get_latest_database_version("h100", "vllm", systems_paths=str(temp_systems_dir)) == "0.14.0"
+
+
+def test_get_supported_databases_includes_shared_layer_marker_versions(temp_systems_dir: Path, perf_database):
+    setup_mock_filesystem(temp_systems_dir, {"h100": {"vllm": ["0.19.0"]}})
+    marker_path = temp_systems_dir / "data_h100" / "vllm" / "0.22.0" / perf_database.SHARED_LAYER_REUSE_MARKER
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("declared shared-layer reuse\n", encoding="utf-8")
+    (temp_systems_dir / "data_h100" / "vllm" / "0.23.0").mkdir(parents=True)
+
+    result = perf_database.get_supported_databases(str(temp_systems_dir))
+
+    assert result["h100"]["vllm"] == ["0.19.0", "0.22.0"]
+
+
+def test_get_supported_databases_skips_incomplete_shared_layer_marker_versions(temp_systems_dir: Path, perf_database):
+    setup_mock_filesystem(temp_systems_dir, {"h100": {"vllm": ["0.19.0"]}})
+    marker_path = temp_systems_dir / "data_h100" / "vllm" / "0.22.0" / perf_database.SHARED_LAYER_REUSE_MARKER
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("declared shared-layer reuse\n", encoding="utf-8")
+    (marker_path.parent / "INCOMPLETE.txt").write_text("not enough profiling coverage\n", encoding="utf-8")
+
+    result = perf_database.get_supported_databases(str(temp_systems_dir))
+
+    assert result["h100"]["vllm"] == ["0.19.0"]
+
+
+def test_get_latest_database_version_skips_marker_only_versions_by_default(temp_systems_dir: Path, perf_database):
+    setup_mock_filesystem(temp_systems_dir, {"h100": {"vllm": ["0.19.0"]}})
+    marker_path = temp_systems_dir / "data_h100" / "vllm" / "0.22.0" / perf_database.SHARED_LAYER_REUSE_MARKER
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("declared shared-layer reuse\n", encoding="utf-8")
+
+    assert perf_database.get_latest_database_version("h100", "vllm", systems_paths=str(temp_systems_dir)) == "0.19.0"
+    assert (
+        perf_database.get_latest_database_version(
+            "h100",
+            "vllm",
+            systems_paths=str(temp_systems_dir),
+            include_shared_layer_marker_versions=True,
+        )
+        == "0.22.0"
+    )
+
+
+def test_get_latest_database_version_uses_marked_versions_with_perf_data_by_default(
+    temp_systems_dir: Path, perf_database
+):
+    setup_mock_filesystem(temp_systems_dir, {"h100": {"vllm": ["0.19.0"]}})
+    marker_path = temp_systems_dir / "data_h100" / "vllm" / "0.22.0" / perf_database.SHARED_LAYER_REUSE_MARKER
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text("declared shared-layer reuse\n", encoding="utf-8")
+    (marker_path.parent / "generation_attention_perf.parquet").write_text("placeholder\n", encoding="utf-8")
+
+    assert perf_database.get_latest_database_version("h100", "vllm", systems_paths=str(temp_systems_dir)) == "0.22.0"
 
 
 def test_get_supported_databases_empty_dir(temp_systems_dir: Path, perf_database):
@@ -344,8 +409,9 @@ def test_get_database_skips_incomplete_version_directory(tmp_path: Path, perf_da
 
 
 def test_perf_database_clear_runtime_caches_clears_interpolation_and_lru_state(perf_database):
+    from aiconfigurator.sdk.perf_interp import engine as perf_interp_engine
+
     db = object.__new__(perf_database.PerfDatabase)
-    db._extracted_metrics_cache = {"table": object()}
     cache_clear_calls = []
 
     def fake_cached_method():
@@ -353,11 +419,164 @@ def test_perf_database_clear_runtime_caches_clears_interpolation_and_lru_state(p
 
     fake_cached_method.cache_clear = lambda: cache_clear_calls.append("cleared")
     db.fake_cached_method = fake_cached_method
+    perf_interp_engine._SITE_INDEX_CACHE[id(db)] = (db, None)
 
     db.clear_runtime_caches()
 
-    assert db._extracted_metrics_cache == {}
+    assert not perf_interp_engine._SITE_INDEX_CACHE
     assert cache_clear_calls == ["cleared"]
+
+
+def test_empirical_and_silicon_views_use_distinct_shared_layer_templates(perf_database):
+    """Formula-only views must not inherit sibling SILICON rows."""
+    empirical = perf_database.get_database_view("b200_sxm", "trtllm", "1.3.0rc10", database_mode="EMPIRICAL")
+    silicon = perf_database.get_database_view("b200_sxm", "trtllm", "1.3.0rc10", database_mode="SILICON")
+
+    assert empirical._root_database_template is not silicon._root_database_template
+    assert empirical.enable_shared_layer is False
+    assert silicon.enable_shared_layer is True
+
+
+def test_database_view_configuration_is_isolated_and_same_key_is_reused(perf_database):
+    from aiconfigurator.sdk import common
+
+    template = perf_database.get_database("b200_sxm", "trtllm", "1.3.0rc10", database_mode="SILICON")
+    template.set_default_database_mode(common.DatabaseMode.SILICON)
+    template.set_transfer_policy(None)
+    template.clear_runtime_caches()
+    shared_table = {"large": object()}
+    template._test_loaded_table = shared_table
+
+    try:
+        view = perf_database.get_database_view(
+            "b200_sxm",
+            "trtllm",
+            "1.3.0rc10",
+            database_mode="HYBRID",
+            transfer_policy="off",
+        )
+        same_view = perf_database.get_database_view(
+            "b200_sxm",
+            "trtllm",
+            "1.3.0rc10",
+            database_mode="HYBRID",
+            transfer_policy="off",
+        )
+        aggressive = perf_database.get_database_view(
+            "b200_sxm",
+            "trtllm",
+            "1.3.0rc10",
+            database_mode="HYBRID",
+            transfer_policy="aggressive",
+        )
+
+        assert view is same_view
+        assert aggressive is not view
+        assert view is not template
+        assert view._root_database_template is template
+        assert view._test_loaded_table is shared_table
+        assert view.supported_quant_mode._database is view
+        assert view.get_default_database_mode() is common.DatabaseMode.HYBRID
+        assert view.transfer_policy == frozenset()
+        assert aggressive.transfer_policy == common.ALL_TRANSFERS
+        assert template.get_default_database_mode() is common.DatabaseMode.SILICON
+        assert template.transfer_policy == common.ALL_TRANSFERS
+
+        with pytest.raises(RuntimeError, match="immutable mode/policy"):
+            view.set_transfer_policy(None)
+        with pytest.raises(RuntimeError, match="immutable mode/policy"):
+            view.set_default_database_mode(common.DatabaseMode.SILICON)
+    finally:
+        del template._test_loaded_table
+        template.clear_runtime_caches()
+
+
+def test_configured_view_cache_normalizes_keys_and_separates_roots(perf_database):
+    import copy
+
+    from aiconfigurator.sdk import common
+
+    template = perf_database.get_database("b200_sxm", "trtllm", "1.3.0rc10", database_mode="SILICON")
+    template.clear_runtime_caches()
+    other_template = copy.copy(template)
+    other_template._is_query_view = False
+
+    view = perf_database._get_configured_database_view(template, "hybrid", None)
+    enum_view = perf_database._get_configured_database_view(
+        template,
+        common.DatabaseMode.HYBRID,
+        common.ALL_TRANSFERS,
+    )
+    list_view = perf_database._get_configured_database_view(
+        template,
+        common.DatabaseMode.HYBRID,
+        list(common.TransferKind),
+    )
+    other_view = perf_database._get_configured_database_view(other_template, "HYBRID", "aggressive")
+
+    assert view is enum_view is list_view
+    assert other_view is not view
+    assert view._root_database_template is template
+    assert other_view._root_database_template is other_template
+    template.clear_runtime_caches()
+
+
+def test_clearing_template_runtime_caches_refreshes_configured_copy(perf_database):
+    from aiconfigurator.sdk import common
+
+    template = perf_database.get_database("b200_sxm", "trtllm", "1.3.0rc10", database_mode="SILICON")
+    template.clear_runtime_caches()
+    old_marker = object()
+    new_marker = object()
+    template._configured_view_marker = old_marker
+
+    try:
+        first = perf_database._get_configured_database_view(template, common.DatabaseMode.HYBRID, "off")
+        template._configured_view_marker = new_marker
+        cached = perf_database._get_configured_database_view(template, common.DatabaseMode.HYBRID, "off")
+
+        assert cached is first
+        assert cached._configured_view_marker is old_marker
+
+        template.clear_runtime_caches()
+        refreshed = perf_database._get_configured_database_view(template, common.DatabaseMode.HYBRID, "off")
+
+        assert refreshed is not first
+        assert refreshed._configured_view_marker is new_marker
+    finally:
+        del template._configured_view_marker
+        template.clear_runtime_caches()
+
+
+def test_configured_view_rejects_incompatible_shared_layer_template(perf_database):
+    from aiconfigurator.sdk import common
+
+    silicon_template = perf_database.get_database("b200_sxm", "trtllm", "1.3.0rc10", database_mode="SILICON")
+
+    with pytest.raises(ValueError, match="use get_database_view"):
+        perf_database._get_configured_database_view(silicon_template, common.DatabaseMode.EMPIRICAL)
+
+
+def test_transfer_policy_and_mode_change_clear_global_grid_cache(perf_database):
+    """In-place mode/policy mutation eagerly drops stale/unreachable grids,
+    while no-op setter calls preserve the cache."""
+    from aiconfigurator.sdk import common
+    from aiconfigurator.sdk.operations import util_empirical
+
+    db = perf_database.get_database("b200_sxm", "trtllm", "1.3.0rc10", database_mode="HYBRID")
+
+    util_empirical._GRID_CACHE["__s1__"] = object()
+    db.set_transfer_policy("conservative")  # != default ALL -> clears
+    assert "__s1__" not in util_empirical._GRID_CACHE
+
+    util_empirical._GRID_CACHE["__s2__"] = object()
+    db.set_transfer_policy("conservative")  # no-op -> preserved
+    assert "__s2__" in util_empirical._GRID_CACHE
+
+    util_empirical._GRID_CACHE["__s3__"] = object()
+    db.set_default_database_mode(common.DatabaseMode.EMPIRICAL)  # != HYBRID -> clears
+    assert "__s3__" not in util_empirical._GRID_CACHE
+    util_empirical._GRID_CACHE.clear()
 
 
 def test_clear_database_runtime_caches_clears_matching_cached_database_once(perf_database):
@@ -373,10 +592,10 @@ def test_clear_database_runtime_caches_clears_matching_cached_database_once(perf
     cache_snapshot = dict(perf_database.databases_cache)
     try:
         perf_database.databases_cache.clear()
-        perf_database.databases_cache[("root", "system", False)]["backend"]["1.0.0"] = clear_db
-        perf_database.databases_cache[("root", "system", True)]["backend"]["1.0.0"] = clear_db
-        perf_database.databases_cache[("root", "system", False)]["backend"]["2.0.0"] = keep_db
-        perf_database.databases_cache[("root", "other-system", False)]["backend"]["1.0.0"] = keep_db
+        perf_database.databases_cache[("root", "system", False, False)]["backend"]["1.0.0"] = clear_db
+        perf_database.databases_cache[("root", "system", True, False)]["backend"]["1.0.0"] = clear_db
+        perf_database.databases_cache[("root", "system", False, False)]["backend"]["2.0.0"] = keep_db
+        perf_database.databases_cache[("root", "other-system", False, False)]["backend"]["1.0.0"] = keep_db
 
         perf_database.clear_database_runtime_caches("system", "backend", "1.0.0")
 
@@ -400,15 +619,15 @@ def test_unload_database_removes_matching_database_and_clears_runtime_cache(perf
     cache_snapshot = dict(perf_database.databases_cache)
     try:
         perf_database.databases_cache.clear()
-        perf_database.databases_cache[("root", "system", False)]["backend"]["1.0.0"] = unload_db
-        perf_database.databases_cache[("root", "system", False)]["backend"]["2.0.0"] = keep_db
-        perf_database.databases_cache[("root", "other-system", False)]["backend"]["1.0.0"] = keep_db
+        perf_database.databases_cache[("root", "system", False, False)]["backend"]["1.0.0"] = unload_db
+        perf_database.databases_cache[("root", "system", False, False)]["backend"]["2.0.0"] = keep_db
+        perf_database.databases_cache[("root", "other-system", False, False)]["backend"]["1.0.0"] = keep_db
 
         perf_database.unload_database("system", "backend", "1.0.0")
 
         assert unload_db.clear_count == 1
-        assert perf_database.databases_cache[("root", "system", False)]["backend"] == {"2.0.0": keep_db}
-        assert perf_database.databases_cache[("root", "other-system", False)]["backend"]["1.0.0"] is keep_db
+        assert perf_database.databases_cache[("root", "system", False, False)]["backend"] == {"2.0.0": keep_db}
+        assert perf_database.databases_cache[("root", "other-system", False, False)]["backend"]["1.0.0"] is keep_db
     finally:
         perf_database.databases_cache.clear()
         perf_database.databases_cache.update(cache_snapshot)

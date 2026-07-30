@@ -24,6 +24,11 @@ inputs:
   - key: ServiceConfig.model_name
     required: false
     default: "ServiceConfig.served_model_name"
+  # Referenced by served_model_name / BenchConfig default expressions and set by
+  # the SDK bridge; declared here so every key used in the schema is declared.
+  # No default: when absent the `... or model_path` fallbacks apply (unchanged).
+  - key: ServiceConfig.served_model_path
+    required: false
   - key: ServiceConfig.head_node_ip
     required: false
     default: "0.0.0.0"
@@ -58,6 +63,14 @@ inputs:
   - key: DynConfig.enable_router
     required: false
     default: false
+  - key: DynConfig.router_mode
+    required: false
+  - key: DynConfig.router_config
+    required: false
+  - key: DynConfig.planner_config
+    required: false
+  - key: DynConfig.kvbm_config
+    required: false
 
   # K8sConfig
   - key: K8sConfig.name_prefix
@@ -73,9 +86,15 @@ inputs:
       trtllm: *default_trtllm_image
       vllm: '"nvcr.io/nvidia/ai-dynamo/vllm-runtime:" ~ generator_dynamo_version'
       sglang: '"nvcr.io/nvidia/ai-dynamo/sglang-runtime:" ~ generator_dynamo_version'
+  - key: K8sConfig.k8s_planner_image
+    required: false
+    default: ""
   - key: K8sConfig.k8s_image_pull_secret
     required: false
     default: ""
+  - key: K8sConfig.transport
+    required: false
+    default: "nvlink"
   - key: K8sConfig.k8s_engine_mode
     required: false
     default: "inline"
@@ -99,6 +118,21 @@ inputs:
   - key: K8sConfig.k8s_hf_home
     required: false
     default: ""
+  # User passthrough (optional; absent -> no effect, output unchanged).
+  # extra_env: env entries appended to each worker's main container.
+  # *_extra_pod_spec: dicts deep-merged into the worker/frontend extraPodSpec
+  # (user values win) -- e.g. nodeSelector, tolerations, affinity.
+  - key: K8sConfig.extra_env
+    required: false
+  - key: K8sConfig.worker_extra_pod_spec
+    required: false
+  - key: K8sConfig.frontend_extra_pod_spec
+    required: false
+  # FPM-only resource-workload controls. Other deployment targets ignore them.
+  - key: K8sConfig.fpm_shared_memory_size
+    required: false
+  - key: K8sConfig.fpm_resource_labels
+    required: false
 
   # Worker config
   - key: WorkerConfig.prefill_workers
@@ -110,6 +144,9 @@ inputs:
   - key: WorkerConfig.agg_workers
     required: false
     default: 1
+  # Multimodal EPD encode worker count (optional; absent -> no encode worker).
+  - key: WorkerConfig.encode_workers
+    required: false
 
   # Runtime additions
   - key: ModelConfig.is_moe
@@ -200,6 +237,27 @@ inputs:
   - key: BenchConfig.ui
     required: false
     default: "'simple'"
+  # Multimodal-image / EPD benchmark options (vision-language deployments).
+  # image_batch_size default 0 = disabled; absent value -> image args omitted.
+  - key: BenchConfig.image_batch_size
+    required: false
+    default: 0
+  - key: BenchConfig.image_width_mean
+    required: false
+  - key: BenchConfig.image_width_stddev
+    required: false
+  - key: BenchConfig.image_height_mean
+    required: false
+  - key: BenchConfig.image_height_stddev
+    required: false
+  - key: BenchConfig.image_format
+    required: false
+  - key: BenchConfig.image_source
+    required: false
+  - key: BenchConfig.input_file
+    required: false
+  - key: BenchConfig.custom_dataset_type
+    required: false
 
   # LlmdConfig - llm-d specific configuration
   - key: LlmdConfig.hf_token_secret
@@ -235,3 +293,18 @@ inputs:
   - key: LlmdConfig.monitoring_enabled
     required: false
     default: false
+  - key: LlmdConfig.accelerator_type
+    required: false
+    default: "nvidia"
+  - key: LlmdConfig.xpu_rdma_enabled
+    required: false
+    default: false
+  - key: LlmdConfig.xpu_kv_buffer_device
+    required: false
+    default: "cpu"
+  - key: LlmdConfig.kustomize_base_path
+    required: false
+    default: ""
+  - key: LlmdConfig.kustomize_name_prefix
+    required: false
+    default: ""

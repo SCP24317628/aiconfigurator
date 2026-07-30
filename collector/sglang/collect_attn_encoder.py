@@ -12,14 +12,14 @@ SM dispatch mirrors ``VisionAttention._determine_attention_backend``:
 Quant: bf16 only. SGLang upstream does not support fp8 ViT FMHA.
 """
 
-__compat__ = "sglang>=0.5.11"
+__compat__ = "sglang==0.5.14"
 
 from typing import NamedTuple
 
 import pkg_resources
 import torch
 
-from collector.case_generator import get_attention_encoder_shape_sweeps
+from collector.case_generator import get_attention_encoder_head_configs, get_attention_encoder_shape_sweeps
 from collector.helper import benchmark_with_power, get_sm_version, log_perf
 
 
@@ -37,19 +37,18 @@ def get_encoder_attention_test_cases():
     for shape_sweep in get_attention_encoder_shape_sweeps("sglang"):
         batch_sizes = _int_list(shape_sweep["batch_sizes"])
         sequence_lengths = _int_list(shape_sweep["sequence_lengths"])
-        head_counts = _int_list(shape_sweep["head_counts"])
-        head_dims = _int_list(shape_sweep["head_dims"])
 
-        for head_dim in head_dims:
-            for n in sorted(head_counts):
-                for s in sorted(sequence_lengths):
-                    for b in sorted(batch_sizes):
-                        # Workload token budget (128K) + 32-bit indexing safety.
-                        if b * s > 131072:
-                            continue
-                        if 4 * b * s * n * head_dim * 2 >= 2**31:
-                            continue
-                        test_cases.append([b, s, n, head_dim])
+        for head_config in get_attention_encoder_head_configs(shape_sweep):
+            n = head_config.num_heads
+            head_dim = head_config.head_dim
+            for s in sorted(sequence_lengths):
+                for b in sorted(batch_sizes):
+                    # Workload token budget (128K) + 32-bit indexing safety.
+                    if b * s > 131072:
+                        continue
+                    if 4 * b * s * n * head_dim * 2 >= 2**31:
+                        continue
+                    test_cases.append([b, s, n, head_dim])
 
     return test_cases
 
@@ -183,7 +182,7 @@ def run_encoder_attention_torch(
 
     latency = results["latency_ms"]
 
-    log_perf(
+    if not log_perf(
         item_list=[
             {
                 "batch_size": batch_size,
@@ -201,7 +200,8 @@ def run_encoder_attention_torch(
         kernel_source=backend_tag,
         perf_filename=perf_filename,
         power_stats=results["power_stats"],
-    )
+    ):
+        raise RuntimeError(f"Failed to persist SGLang encoder attention performance row to {perf_filename}")
 
     return Timing(latency * 1e-3)
 

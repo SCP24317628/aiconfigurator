@@ -8,19 +8,20 @@ SPDX-License-Identifier: Apache-2.0
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ai-dynamo/aiconfigurator)
 [![Discord](https://dcbadge.limes.pink/api/server/mRJ2KNzwYE?style=flat)](https://discord.gg/mRJ2KNzwYE)
 
+Explore the [AIC Developer Universe](https://ai-dynamo.github.io/aiconfigurator/universe/), an interactive map of AIConfigurator and its Dynamo integration.
 
 In disaggregated serving, configuring an effective deployment is challenging: you need to decide how many prefill and decode
 workers to run, and the parallelism for each worker. Combined with SLA targets for TTFT (Time to First Token) and
 TPOT (Time per Output Token), optimizing throughput at a given latency becomes even more complex.
 
 `aiconfigurator` helps you find a strong starting configuration for disaggregated serving. Given your model, GPU
-count, and GPU type, it searches the configuration space and generates configuration files you can use for deployment with Dynamo.
+count, and GPU type, it searches the configuration space and generates configuration files you can use for deployment with Dynamo or llm-d.
 
-For a technical deep dive into the design and methodology of AIConfigurator, please refer to our paper:  
+For a technical deep dive into the design and methodology of AIConfigurator, please refer to our paper:
 [**AIConfigurator: Lightning-Fast Configuration Optimization for Multi-Framework LLM Serving**](https://arxiv.org/abs/2601.06288).
 
 The tool models LLM inference using collected data for a target machine and framework. It evaluates thousands of
-configurations and runs anywhere via the CLI and the web app.
+configurations and runs anywhere via the CLI.
 
 Let's get started.
 
@@ -28,36 +29,74 @@ Let's get started.
 
 ### Install from PyPI
 
+> **Published-wheel support: Linux x86-64 only.** The required
+> `aiconfigurator-core` wheel bundles a native Rust/PyO3 extension and is built
+> as a `manylinux_2_28_x86_64` wheel (Linux x86-64, glibc >= 2.28). Linux
+> aarch64 has no published core wheel and must build `./aic-core` and the root
+> project from source; that path is not covered by published-wheel support.
+> macOS and Windows have no supported installation path.
+
 ```bash
 pip3 install aiconfigurator
+```
+
+The upper `aiconfigurator` wheel contains the CLI and generator.
+It depends on the exact matching `aiconfigurator-core` wheel, which independently
+owns the SDK, model/system data, and native extension. Installing
+`aiconfigurator` therefore installs the complete product, while core-only
+consumers can install `aiconfigurator-core` without pulling in the upper layer.
+
+`Task` and the orchestration APIs live in the application wheel only:
+
+```python
+from aiconfigurator.sdk.task_v2 import Task
+```
+
+The core wheel intentionally does not expose `task_v2`; the standalone core
+never depends back on the application package.
+
+#### Upgrading from 0.9
+
+Version 0.9 shipped core files inside `aiconfigurator`. Package installers cannot
+safely transfer those same paths to the new dependency during a normal in-place
+upgrade because dependencies are installed before dependents. Remove the old
+owner first when crossing this package boundary:
+
+```bash
+python3 -m pip uninstall -y aiconfigurator aiconfigurator-core
+python3 -m pip install 'aiconfigurator==0.11.0'
+```
+
+If a normal upgrade was already attempted, repair the core payload with:
+
+```bash
+python3 -m pip install --force-reinstall --no-deps 'aiconfigurator-core==0.11.0'
 ```
 
 ### Build and Install from Source
 
 ```bash
-# 1. Install Git LFS
-apt-get install git-lfs  # (Linux)
-# brew install git-lfs   # (macOS)
-
-# 2. Clone the repo
+# 1. Clone the repo
 git clone https://github.com/ai-dynamo/aiconfigurator.git
 cd aiconfigurator
-git lfs pull
 
-# 3. Create and activate a virtual environment
-python3 -m venv myenv && source myenv/bin/activate # (requires Python 3.9 or later)
+# 2. Create and activate a virtual environment
+python3 -m venv myenv && source myenv/bin/activate # (requires Python 3.10 or later)
 
-# 4. Install aiconfigurator
+# 3. Install the standalone core, then the upper package
+pip3 install ./aic-core
 pip3 install .
-
-# 5. Install aiconfigurator with webapp support
-pip3 install ".[webapp]"
 ```
+
+Current performance profiles are checked-in Parquet files, so normal builds
+and usage do not require Git LFS. Install Git LFS and run `git lfs pull` only
+when working with retained legacy `*.txt` perf assets or their compatibility
+tests.
 
 ### Build with Docker
 
 ```bash
-# This will create a ./dist/ folder containing the wheel file
+# This creates disjoint upper AIC and standalone core wheels
 docker build -f docker/Dockerfile --no-cache --target build -t aiconfigurator:latest .
 docker create --name aic aiconfigurator:latest && docker cp aic:/workspace/dist dist/ && docker rm aic
 ```
@@ -68,31 +107,38 @@ docker create --name aic aiconfigurator:latest && docker cp aic:/workspace/dist 
 
 ```bash
 aiconfigurator cli default --model Qwen/Qwen3-32B-FP8 --total-gpus 32 --system h200_sxm
+aiconfigurator cli recommend --model Qwen/Qwen3-32B-FP8 --system h200_sxm --target-request-rate 50 --ttft 2000 --tpot 30
 aiconfigurator cli exp --yaml-path exp.yaml
 aiconfigurator cli generate --model-path Qwen/Qwen3-32B-FP8 --total-gpus 8 --system h200_sxm
 aiconfigurator cli support --model-path Qwen/Qwen3-32B-FP8 --system h200_sxm
 ```
-- We have four modes: `default`, `exp`, `generate`, and `support`.
+- We have six modes: `default`, `estimate`, `recommend`, `exp`, `generate`, and `support`.
 - Use `default` to find the estimated best deployment by searching the configuration space.
+- The experimental Spica smart sweeper now lives in Dynamo's standalone
+  [AI Simulate distribution](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/ai-simulate/spica/overview).
+  From a matching Dynamo checkout, install it with `python -m pip install ./aisimulate`, then use
+  `python -m aisimulate.spica` for Spica searches. Runnable configurations and tools live under
+  `examples/aisimulate/spica`.
 - Use `exp` to run customized experiments defined in a YAML file.
 - Use `generate` to quickly create a naive configuration without a parameter sweep.
+- Use `recommend` to find the minimum GPU count and optimal deployment configuration needed to meet a performance target. This mode is designed as a procurement sizing tool -- specify exactly one load target (`--target-request-rate` or `--target-concurrency` — mutually exclusive) along with SLA constraints, and the system calculates the minimum GPUs required. You can also omit `--total-gpus` in default mode with a load target for the same behavior.
 - Use `support` to verify if AIC supports a model/hardware combination for agg and disagg modes.
 - `--model` is an alias for `--model-path` in the CLI.
 - Use `--backend` to specify the inference backend: `trtllm` (default), `vllm`, or `sglang`.
-- Use `--deployment-target` to specify the deployment platform: `dynamo-j2` (default, Jinja2 templates), `dynamo-python` (Dynamo Python config modifiers), or `llm-d` (llm-d Helm values). Backends vllm and sglang support llm-d; trtllm is Dynamo-only.
+- Use `--deployment-target` to specify the artifact platform: `dynamo-j2` (default, typed Dynamo manifests), `dynamo-python`, `llm-d-helm`, `llm-d-kustomize`, or `fpm`. FPM V1 supports one aggregated vLLM worker group and emits exactly two artifacts: a reusable keepalive Pod or LeaderWorkerSet, and `run.sh`; see the [Generator overview](docs/generator_overview.md#fpm-v1-target).
 - Use `exp`, pass in exp.yaml by `--yaml-path` to customize your experiments and even a heterogenous one.
-- Use `--save-dir DIR` to generate deployment configuration files (Dynamo K8s manifests or llm-d Helm values, depending on `--deployment-target`).
+- Use `--save-dir DIR` to generate deployment artifacts for the selected target (Dynamo manifests, llm-d values/overlays, or an FPM resource workload + script).
 - Use `--database-mode` to control performance estimation mode: `SILICON` (default, uses collected silicon data), `HYBRID` (uses silicon data when available, otherwise SOL+empirical), `EMPIRICAL` (SOL+empirical for all), or `SOL` (speed-of-light only). Please be careful, only `SILICON` mode's result is reproducible. Other modes are for research purpose
 - Use `--systems-paths` to override where system YAMLs and data are loaded from (comma-separated; `default` maps to the built-in systems path). First match wins for identical system/backend/version.
 - Use `-h` for more options and customization.
 - SLA constraints:
   - `--ttft` and `--tpot` filter configurations that exceed either bound; omit a flag to leave that constraint unset.
-  - `--request-latency` applies an end-to-end per-request limit. The CLI searches for all configurations whose estimated 
-  latency stays within that budget, optionally honoring a provided `--ttft`. 
+  - `--request-latency` applies an end-to-end per-request limit. The CLI searches for all configurations whose estimated
+  latency stays within that budget, optionally honoring a provided `--ttft`.
   When this flag is set, `--tpot` becomes implicit and is ignored.
 
-Quantization defaults are inferred from the Hugging Face model config (`config.json` plus optional `hf_quant_config.json`).  
-For low-precision models, use a quantized HF ID (for example, `Qwen/Qwen3-32B-FP8`) or a local model directory containing those files.  
+Quantization defaults are inferred from the Hugging Face model config (`config.json` plus optional `hf_quant_config.json`).
+For low-precision models, use a quantized HF ID (for example, `Qwen/Qwen3-32B-FP8`) or a local model directory containing those files.
 Any quantization set via `profiles` or YAML `config` overrides the HF defaults.
 
 For a full end-to-end walkthrough (support check, sweep, deploy, benchmark), see the [CLI User Guide -- End-to-End Workflow](docs/cli_user_guide.md#end-to-end-workflow).
@@ -104,7 +150,7 @@ Refer to [CLI User Guide](docs/cli_user_guide.md)
 You can also use `aiconfigurator` programmatically in Python:
 
 ```python
-from aiconfigurator.cli import cli_default, cli_exp, cli_generate, cli_support
+from aiconfigurator.cli import cli_default, cli_exp, cli_generate, cli_recommend, cli_support
 
 # 1. Run default agg vs disagg comparison
 result = cli_default(model_path="Qwen/Qwen3-32B-FP8", total_gpus=32, system="h200_sxm")
@@ -124,16 +170,21 @@ result = cli_exp(config={
     }
 })
 
-# 3. Generate a naive configuration
+# 3. Find minimum GPUs for a performance target (procurement sizing)
+result = cli_recommend(model_path="Qwen/Qwen3-32B-FP8", system="h200_sxm", target_request_rate=50.0, ttft=2000, tpot=30)
+for mode, df in result.best_configs.items():
+    print(f"{mode}: {df[['total_gpus_needed', 'replicas_needed', 'tp', 'tpot']].head()}")
+
+# 4. Generate a naive configuration
 result = cli_generate(model_path="Qwen/Qwen3-32B-FP8", total_gpus=8, system="h200_sxm")
 print(result["parallelism"]) # {'tp': 1, 'pp': 1, 'replicas': 8, 'gpus_used': 8}
 
-# 4. Check support for a model/system combination
+# 5. Check support for a model/system combination
 agg, disagg = cli_support(model_path="Qwen/Qwen3-32B-FP8", system="h200_sxm")
 print(f"Agg supported: {agg}, Disagg supported: {disagg}")
 ```
 
-An example here, 
+An example here,
 ```bash
 aiconfigurator cli default --model-path Qwen/Qwen3-32B-FP8 --total-gpus 32 --system h200_sxm --isl 4000 --osl 500 --prefix 500 --ttft 300 --tpot 10
 ```
@@ -185,8 +236,8 @@ aiconfigurator cli default --model-path Qwen/Qwen3-32B-FP8 --total-gpus 32 --sys
       │                                                                •       │
    0.0┤                                                                        │
       └┬─────────────────┬─────────────────┬────────────────┬─────────────────┬┘
-       0                60                120              180              240 
-tokens/s/gpu_cluster                 tokens/s/user                              
+       0                60                120              180              240
+tokens/s/gpu_cluster                 tokens/s/user
 
   ----------------------------------------------------------------------------
   Deployment Details:
@@ -227,7 +278,7 @@ You will get different results.
 
 ### Customized Configuration for aiconfigurator
 
-The `default` mode will create two experiments, one is `agg` and another one is `disagg` and then compare the results.  
+The `default` mode will create two experiments, one is `agg` and another one is `disagg` and then compare the results.
 To further customize (including the search space and per-component quantization), parameters are defined in a YAML file.
 Built-in YAML files are under `src/aiconfigurator/cli/example.yaml` and `src/aiconfigurator/cli/exps/*.yaml`
 Refer to the YAML file and modify as needed. Pass your customized YAML file to `exp` mode:
@@ -235,13 +286,13 @@ Refer to the YAML file and modify as needed. Pass your customized YAML file to `
 ```bash
 aiconfigurator cli exp --yaml-path customized_config.yaml
 ```
-We can use `exp` mode to compare multiple results, including disagg vs. agg, homegenous vs. heterogenous, and more than 2 experiments. 
-We've crafted several examples in `src/aiconfigurator/cli/exps/*.yaml`  
+We can use `exp` mode to compare multiple results, including disagg vs. agg, homogeneous vs. heterogeneous, and more than 2 experiments.
+We've crafted several examples in `src/aiconfigurator/cli/exps/*.yaml`
 For the full guide, refer to [CLI User Guide](docs/cli_user_guide.md).
 
 ### Deploying to llm-d Platform
 
-AIConfigurator supports deploying to the llm-d platform using Helm values. Use `--deployment-target llm-d` with vLLM or SGLang backends:
+AIConfigurator supports deploying to the llm-d platform using Helm values. Use `--deployment-target llm-d-helm` with vLLM or SGLang backends:
 
 ```bash
 # vLLM on llm-d
@@ -250,7 +301,7 @@ aiconfigurator cli default \
   --total-gpus 32 \
   --system h200_sxm \
   --backend vllm \
-  --deployment-target llm-d \
+  --deployment-target llm-d-helm \
   --save-dir ./output
 
 # SGLang on llm-d
@@ -259,7 +310,7 @@ aiconfigurator cli default \
   --total-gpus 32 \
   --system h200_sxm \
   --backend sglang \
-  --deployment-target llm-d \
+  --deployment-target llm-d-helm \
   --save-dir ./output
 ```
 
@@ -293,7 +344,7 @@ results/QWEN3_32B_FP8_h200_sxm_trtllm_isl4000_osl1000_ttft1000_tpot20_904495
 │   │   │   ├── bench_run.sh          # aiperf benchmark sweep script (bare-metal)
 │   │   │   ├── k8s_bench.yaml        # aiperf benchmark sweep Job (Kubernetes)
 │   │   │   ├── k8s_deploy.yaml
-│   │   │   └── node_0_run.sh 
+│   │   │   └── node_0_run.sh
 │   │   └── generator_config.yaml
 │   ...
 ├── disagg
@@ -313,7 +364,7 @@ results/QWEN3_32B_FP8_h200_sxm_trtllm_isl4000_osl1000_ttft1000_tpot20_904495
 └── pareto_frontier.png
 ```
 
-**For llm-d deployments** (`--deployment-target llm-d`):
+**For llm-d Helm deployments** (`--deployment-target llm-d-helm`):
 
 ```text
 results/QWEN3_32B_h200_sxm_vllm_isl4000_osl1000_ttft1000_tpot20_904495
@@ -339,21 +390,12 @@ Use `--generator-config path/to/file.yaml` to load a YAML payload with `ServiceC
 - `--generator-set ServiceConfig.model_path=Qwen/Qwen3-32B-FP8`
 - `--generator-set K8sConfig.k8s_namespace=dynamo \`
 
-Run `aiconfigurator cli default --generator-help` to print information that is sourced directly from `src/aiconfigurator/generator/config/deployment_config.yaml` and `backend_config_mapping.yaml`. 
-
-## Webapp
-
-```bash
-aiconfigurator webapp
-```
-
-Visit `127.0.0.1:7860`.
-Refer to [Advanced Tuning](docs/advanced_tuning.md) and the webapp README tab before running experiments.
+Run `aiconfigurator cli default --generator-help` to print information that is sourced directly from `src/aiconfigurator/generator/config/deployment_config.yaml` and `backend_config_mapping.yaml`.
 
 ## Tuning with Advanced Features
 
 There are many features, such as different quantizations and parallelism strategies, to tune performance beyond the default configurations.
-These apply to both the CLI and the webapp. Refer to [Advanced Tuning](docs/advanced_tuning.md) for details.
+These apply to the CLI. Refer to [Advanced Tuning](docs/advanced_tuning.md) for details.
 
 ## How It Works
 
@@ -370,7 +412,7 @@ To estimate performance, we take the following steps:
 2. Collect operation execution times on the target hardware.
 3. Estimate end-to-end execution time for a configuration by composing operation times using interpolation and extrapolation.
 4. Model in-flight batching (aggregated) and disaggregated serving on top of that.
-5. Search thousands of combinations to find strong configurations and generate Dynamo configuration files based on the results.
+5. Search thousands of combinations to find strong configurations and generate Dynamo or llm-d configuration files based on the results.
 
 ### Supported Features
 
@@ -442,7 +484,7 @@ To go through the process, refer to the [guidance](collector/README.md) under th
 
 For a comprehensive, interactive view of which model/system/backend/version combinations are supported in both aggregated and disaggregated modes, visit the **[Support Matrix on GitHub Pages](https://ai-dynamo.github.io/aiconfigurator/support-matrix/)**. The page fetches the split support matrix CSV files directly from GitHub at load time and supports filtering by system, mode, model search, and switching between branches.
 
-The raw data is also available as [per-system CSV files](src/aiconfigurator/systems/support_matrix).
+The raw data is also available as [per-system CSV files](aic-core/src/aiconfigurator_core/systems/support_matrix).
 
 You can also check support via the CLI:
 ```bash

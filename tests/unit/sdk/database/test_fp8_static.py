@@ -184,7 +184,10 @@ def test_query_gemm_fp8_static_requires_dynamic_fp8_table(mutable_comprehensive_
         )
 
 
-def test_query_gemm_fp8_static_sparse_shape_miss_is_structured(mutable_comprehensive_perf_db):
+def test_query_gemm_fp8_static_sparse_shape_transfers_or_misses_structurally(mutable_comprehensive_perf_db):
+    """With only (n=4096, k=5120) collected: a NEARBY uncollected shape (k=4096,
+    ~0.3 octaves away) degrades gracefully via nearest-site util transfer, while
+    a FAR shape (many octaves from anything) stays a structured miss."""
     db = mutable_comprehensive_perf_db
     db.backend = common.BackendName.sglang.value
     db._gemm_data = LoadedOpData(
@@ -202,11 +205,15 @@ def test_query_gemm_fp8_static_sparse_shape_miss_is_structured(mutable_comprehen
     )
     db.query_gemm.cache_clear()
 
+    near = db.query_gemm(1, 4096, 4096, common.GEMMQuantMode.fp8_static, database_mode=common.DatabaseMode.SILICON)
+    assert float(near) > 0
+    assert near.source == "silicon"
+
     with pytest.raises(PerfDataNotAvailableError, match=r"GEMM perf data not available.*fp8_static"):
         db.query_gemm(
             1,
-            4096,
-            4096,
+            64,
+            64,
             common.GEMMQuantMode.fp8_static,
             database_mode=common.DatabaseMode.SILICON,
         )
@@ -244,6 +251,50 @@ def test_query_compute_scale_fp8_static_reuses_fp8_table(mutable_comprehensive_p
     assert clamped.energy == pytest.approx(fp8_max_m.energy)
 
 
+def test_query_compute_scale_empirical_preserves_zero_delta(mutable_comprehensive_perf_db):
+    db = mutable_comprehensive_perf_db
+    # compute_scale is max(dynamic_quant - static_quant, 0).  The zero at the
+    # matching K is a valid local observation; the lone positive point at a
+    # different K must not become a global util reference.
+    db._compute_scale_data = LoadedOpData(
+        {
+            common.GEMMQuantMode.fp8: {
+                128: {
+                    32: {"latency": 0.5, "energy": 0.0},
+                    512: {"latency": 0.0, "energy": 0.0},
+                },
+            }
+        },
+        common.PerfDataFilename.compute_scale,
+        "dummy_path",
+    )
+    db.query_compute_scale.cache_clear()
+    table = db._compute_scale_data[common.GEMMQuantMode.fp8]
+    ops.GEMM._compute_scale_delta_lookup_cache.pop(id(table), None)
+
+    result = db.query_compute_scale(
+        10_000,
+        512,
+        common.GEMMQuantMode.fp8_static,
+        database_mode=common.DatabaseMode.EMPIRICAL,
+    )
+
+    assert float(result) == 0.0
+    assert result.source == "empirical"
+
+    positive = db.query_compute_scale(
+        256,
+        32,
+        common.GEMMQuantMode.fp8_static,
+        database_mode=common.DatabaseMode.EMPIRICAL,
+    )
+    # A selected positive delta still freezes utilization; doubling m doubles
+    # the memory-SOL proxy and therefore the estimated delta.
+    assert float(positive) == pytest.approx(1.0)
+
+    ops.GEMM._compute_scale_delta_lookup_cache.pop(id(table), None)
+
+
 def test_query_scale_matrix_fp8_static_reuses_fp8_table(mutable_comprehensive_perf_db):
     db = mutable_comprehensive_perf_db
     scale_matrix_data_dict = {
@@ -267,11 +318,12 @@ def test_query_scale_matrix_fp8_static_reuses_fp8_table(mutable_comprehensive_pe
     assert float(static_result) == pytest.approx(float(fp8_result))
     assert static_result.energy == pytest.approx(fp8_result.energy)
 
-    # Out-of-range m should be clamped to the table range (avoid hard failure in SILICON mode).
-    clamped = db.query_scale_matrix(10_000, k, common.GEMMQuantMode.fp8_static)
+    # Out-of-range m freezes boundary utilization rather than boundary latency.
+    extrapolated = db.query_scale_matrix(10_000, k, common.GEMMQuantMode.fp8_static)
     fp8_max_m = db.query_scale_matrix(128, k, common.GEMMQuantMode.fp8)
-    assert float(clamped) == pytest.approx(float(fp8_max_m))
-    assert clamped.energy == pytest.approx(fp8_max_m.energy)
+    ratio = 10_000 / 128
+    assert float(extrapolated) == pytest.approx(float(fp8_max_m) * ratio)
+    assert extrapolated.energy == pytest.approx(fp8_max_m.energy * ratio)
 
 
 def test_gemm_query_subtracts_overheads_for_fp8_static():
@@ -281,6 +333,8 @@ def test_gemm_query_subtracts_overheads_for_fp8_static():
             self.calls: list[tuple[str, common.GEMMQuantMode]] = []
 
         def query_gemm(self, m, n, k, quant_mode, database_mode=None):
+            if database_mode == common.DatabaseMode.SOL:
+                return PerformanceResult(2.0, energy=0.0, source="sol")
             self.calls.append(("gemm", quant_mode))
             return PerformanceResult(10.0, energy=100.0)
 
@@ -342,3 +396,35 @@ def test_gemm_query_subtracts_overheads_for_fp8_static():
     assert result3.energy == pytest.approx(100.0)
     assert result3.source == "silicon"
     assert db3.calls == [("gemm", common.GEMMQuantMode.fp8)]
+
+
+def test_gemm_query_fp8_static_uses_gemm_sol_latency_floor():
+    class FakeDatabase:
+        def query_gemm(self, m, n, k, quant_mode, database_mode=None):
+            if database_mode == common.DatabaseMode.SOL:
+                return PerformanceResult(2.5, energy=0.0, source="sol")
+            return PerformanceResult(4.0, energy=40.0)
+
+        def query_compute_scale(self, m, k, quant_mode, database_mode=None):
+            return PerformanceResult(1.0, energy=10.0)
+
+        def query_scale_matrix(self, m, k, quant_mode, database_mode=None):
+            return PerformanceResult(5.0, energy=50.0)
+
+    op = ops.GEMM(
+        "context_proj_gemm",
+        3.0,
+        n=128,
+        k=256,
+        quant_mode=common.GEMMQuantMode.fp8_static,
+        low_precision_input=True,
+    )
+
+    result = op.query(FakeDatabase(), x=64)
+
+    # 4 - 1 - 5 is negative, but GEMM-only latency cannot be below its
+    # 2.5-ms roofline bound. The operation scale factor is applied afterward.
+    assert float(result) == pytest.approx(7.5)
+    # There is no energy SOL model from which to synthesize a floor.
+    assert result.energy == 0.0
+    assert result.source == "estimated"

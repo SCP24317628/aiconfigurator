@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import ast
+import json
 import sys
 import types
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -55,11 +58,12 @@ class TestGetPrecisionCombos:
         mod = _import_module()
         with patch.object(mod, "get_sm_version", return_value=90):
             combos = mod._get_precision_combos("context")
-        assert ("bfloat16", "bfloat16", "bfloat16") in combos
-        assert ("bfloat16", "fp8", "bfloat16") in combos
-        assert ("bfloat16", "bfloat16", "fp8_block") in combos
-        assert ("bfloat16", "fp8", "fp8_block") in combos
-        assert len(combos) == 4
+        assert combos == [
+            ("bfloat16", "bfloat16", "bfloat16"),
+            ("bfloat16", "fp8", "bfloat16"),
+            ("bfloat16", "bfloat16", "fp8_block"),
+            ("bfloat16", "fp8", "fp8_block"),
+        ]
 
     def test_ada_sm89_no_fp8(self):
         mod = _import_module()
@@ -87,12 +91,12 @@ class TestGetPrecisionCombos:
 
 
 class TestGetBackends:
-    def test_dsa_always_nsa(self):
+    def test_dsa_uses_0514_backend_name(self):
         mod = _import_module()
         with patch.object(mod, "get_sm_version", return_value=90):
-            assert mod._get_backends("dsa") == "nsa"
+            assert mod._get_backends("dsa") == "dsa"
         with patch.object(mod, "get_sm_version", return_value=100):
-            assert mod._get_backends("dsa") == "nsa"
+            assert mod._get_backends("dsa") == "dsa"
 
     def test_mla_hopper(self):
         mod = _import_module()
@@ -167,89 +171,140 @@ class TestDsaRuntimeLimits:
         assert not dsa_indexer_total_kv_tokens_supported(32, 4, 1_048_575, is_prefill=True)
         assert not dsa_indexer_total_kv_tokens_supported(64, 4, 524_288, is_prefill=True)
 
+    def test_decode_allocation_counts_fresh_token_before_page_rounding(self):
+        from collector.sglang.runtime_limits import required_kv_alloc_tokens
 
-class TestDsaPiecewiseCudaGraph:
-    def test_glm5_dsa_piecewise_graph_is_opt_in(self, monkeypatch):
+        assert required_kv_alloc_tokens(2, 256, 0, 256, is_prefill=True) == 512
+        assert required_kv_alloc_tokens(2, 256, 0, 256, is_prefill=False) == 1024
+
+    def test_hybrid_swa_allocation_counts_tail_and_fresh_page(self):
+        from collector.sglang.runtime_limits import required_swa_kv_alloc_tokens
+
+        assert required_swa_kv_alloc_tokens(2, 1, 256, 256, 128, is_prefill=True) == 1024
+        assert required_swa_kv_alloc_tokens(2, 256, 0, 256, 128, is_prefill=False) == 1024
+
+
+class TestDsaCudaGraph:
+    def test_generation_cuda_graph_uses_max_batch_tokens(self):
         mod = _import_module()
-        monkeypatch.delenv("AIC_ENABLE_PIECEWISE_CUDA_GRAPH", raising=False)
-        monkeypatch.delenv("AIC_DISABLE_PIECEWISE_CUDA_GRAPH", raising=False)
+        runner = types.SimpleNamespace(
+            server_args=types.SimpleNamespace(
+                cuda_graph_config=types.SimpleNamespace(
+                    decode=types.SimpleNamespace(backend="cudagraphs", bs=None, max_bs=256)
+                )
+            )
+        )
 
-        assert not mod._enable_glm5_dsa_piecewise_graph("dsa", "nvidia/GLM-5-NVFP4")
-        assert not mod._enable_glm5_dsa_piecewise_graph("dsa", "zai-org/GLM-5")
-        assert not mod._enable_glm5_dsa_piecewise_graph("mla", "nvidia/GLM-5-NVFP4")
-        assert not mod._enable_glm5_dsa_piecewise_graph("dsa", "deepseek-ai/DeepSeek-V3.2")
+        assert mod._generation_cuda_graph_enabled_for_tokens(runner, 256)
+        assert not mod._generation_cuda_graph_enabled_for_tokens(runner, 257)
 
-    def test_glm5_dsa_piecewise_graph_can_be_enabled(self, monkeypatch):
+    def test_generation_cuda_graph_uses_explicit_batch_list(self):
         mod = _import_module()
-        monkeypatch.setenv("AIC_ENABLE_PIECEWISE_CUDA_GRAPH", "1")
-        monkeypatch.delenv("AIC_DISABLE_PIECEWISE_CUDA_GRAPH", raising=False)
+        runner = types.SimpleNamespace(
+            server_args=types.SimpleNamespace(
+                cuda_graph_config=types.SimpleNamespace(
+                    decode=types.SimpleNamespace(backend="cudagraphs", bs=[1, 4, 16], max_bs=None)
+                )
+            )
+        )
 
-        assert mod._enable_glm5_dsa_piecewise_graph("dsa", "nvidia/GLM-5-NVFP4")
-        assert mod._enable_glm5_dsa_piecewise_graph("dsa", "zai-org/GLM-5")
-        assert not mod._enable_glm5_dsa_piecewise_graph("mla", "nvidia/GLM-5-NVFP4")
+        assert mod._generation_cuda_graph_enabled_for_tokens(runner, 4)
+        assert not mod._generation_cuda_graph_enabled_for_tokens(runner, 8)
 
-    def test_piecewise_graph_can_be_disabled(self, monkeypatch):
+    def test_generation_cuda_graph_can_be_disabled(self):
         mod = _import_module()
-        monkeypatch.setenv("AIC_DISABLE_PIECEWISE_CUDA_GRAPH", "1")
-        monkeypatch.setenv("AIC_ENABLE_PIECEWISE_CUDA_GRAPH", "1")
+        runner = types.SimpleNamespace(
+            server_args=types.SimpleNamespace(
+                cuda_graph_config=types.SimpleNamespace(
+                    decode=types.SimpleNamespace(backend="disabled", bs=[1, 4, 16], max_bs=None)
+                )
+            )
+        )
 
-        assert not mod._enable_glm5_dsa_piecewise_graph("dsa", "nvidia/GLM-5-NVFP4")
+        assert not mod._generation_cuda_graph_enabled_for_tokens(runner, 4)
 
-    def test_piecewise_token_buckets_follow_case_shape(self, monkeypatch):
-        mod = _import_module()
-        monkeypatch.delenv("AIC_PIECEWISE_CUDA_GRAPH_TOKENS", raising=False)
-        cases = [(2, 128, True, 0), (4, 64, True, 1024)]
 
-        assert mod._piecewise_cuda_graph_tokens_for_cases(cases, is_prefill=True) == [256]
-        assert mod._piecewise_cuda_graph_tokens_for_cases(cases, is_prefill=False) == [2, 4]
+class TestDsaSkipIndexer:
+    def test_uses_sglang_cross_layer_topk_contract(self):
+        source_path = Path("collector/sglang/collect_mla_module.py")
+        source = source_path.read_text()
+        tree = ast.parse(source, filename=str(source_path))
+        functions = {
+            node.name: ast.get_source_segment(source, node) for node in tree.body if isinstance(node, ast.FunctionDef)
+        }
 
-    def test_piecewise_token_buckets_accept_env_override(self, monkeypatch):
-        mod = _import_module()
-        monkeypatch.setenv("AIC_PIECEWISE_CUDA_GRAPH_TOKENS", "256,512")
+        prefill = functions["_run_prefill"]
+        assert "AttnForwardMethod.MHA_ONE_SHOT" in prefill
+        assert "attention_module.next_skip_topk = True" in prefill
+        assert '_skip_state["prev_topk"] = warmup_output[1].detach()' in prefill
+        assert "attention_module.skip_topk = _skip_uses_dense_mha" in prefill
+        assert 'not _skip_uses_dense_mha and _skip_state["prev_topk"] is None' in prefill
+        assert "sglang_dsa_dense_mha_" in prefill
+        assert "dsa_backend.dsa_prefill_impl" in prefill
 
-        assert mod._piecewise_cuda_graph_tokens_for_cases([(2, 128, True, 0)], is_prefill=True) == [256, 512]
+        decode = functions["_run_decode"]
+        assert "attention_module.next_skip_topk = True" in decode
+        assert '_skip_state["prev_topk"] = warmup_output[1].detach()' in decode
+        assert "return attention_module(" in decode
+        assert "model_capture_mode() if use_benchmark_cuda_graph" in decode
+        assert "model_runner.attn_backend.dsa_decode_impl" in decode
 
-    def test_generation_cuda_graph_uses_max_batch_tokens(self, monkeypatch):
-        mod = _import_module()
-        monkeypatch.delenv("AIC_CUDA_GRAPH_BS", raising=False)
-        monkeypatch.delenv("AIC_DISABLE_CUDA_GRAPH", raising=False)
-        monkeypatch.setenv("AIC_CUDA_GRAPH_MAX_BS", "256")
-
-        assert mod._generation_cuda_graph_enabled_for_tokens(256)
-        assert not mod._generation_cuda_graph_enabled_for_tokens(257)
-
-    def test_generation_cuda_graph_uses_explicit_batch_list(self, monkeypatch):
-        mod = _import_module()
-        monkeypatch.delenv("AIC_DISABLE_CUDA_GRAPH", raising=False)
-        monkeypatch.setenv("AIC_CUDA_GRAPH_BS", "1,4,16")
-
-        assert mod._generation_cuda_graph_enabled_for_tokens(4)
-        assert not mod._generation_cuda_graph_enabled_for_tokens(8)
-
-    def test_generation_cuda_graph_can_be_disabled(self, monkeypatch):
-        mod = _import_module()
-        monkeypatch.setenv("AIC_DISABLE_CUDA_GRAPH", "1")
-        monkeypatch.setenv("AIC_CUDA_GRAPH_BS", "1,4,16")
-
-        assert not mod._generation_cuda_graph_enabled_for_tokens(4)
+        assert "register_forward_hook" not in prefill
+        assert "register_forward_hook" not in decode
 
 
 class TestBuildModuleTestCases:
-    def test_module_precision_includes_fp8_kv_for_sglang(self):
+    def test_glm52_local_config_uses_transformers_v5_layer_type(self):
         mod = _import_module()
-        with patch.object(mod, "get_sm_version", return_value=90):
-            combos = mod._get_module_precision_combos()
-        assert ("bfloat16", "bfloat16", "bfloat16") in combos
-        assert ("bfloat16", "fp8", "bfloat16") in combos
 
-    def test_dsa_includes_both_models(self):
+        local_path = Path(mod._resolve_local_model_path("nvidia/GLM-5.2-NVFP4"))
+        config = json.loads((local_path / "config.json").read_text())
+
+        assert "deepseek_sparse_attention" not in config["layer_types"]
+        assert set(config["layer_types"]) == {"compressed_sparse_attention"}
+        assert config["architectures"] == ["GlmMoeDsaForCausalLM"]
+        assert config["index_topk_freq"] == 4
+
+    def test_module_precision_respects_outer_sm_gate(self):
         mod = _import_module()
-        with patch.object(mod, "get_sm_version", return_value=90):
+        with patch.object(mod, "get_sm_version", return_value=89):
             cases = mod._build_module_test_cases("dsa", "context")
-        model_paths = {c[6] for c in cases}
+        assert cases
+        assert {case[3] for case in cases} == {"bfloat16"}
+
+    def test_module_precision_passes_phase_and_sm_to_yaml(self):
+        mod = _import_module()
+        calls = []
+
+        def precision_specs(backend, *, phase, sm_version):
+            calls.append((backend, phase, sm_version))
+            return [
+                types.SimpleNamespace(
+                    compute_dtype="bfloat16",
+                    kv_cache_dtype="bfloat16",
+                    gemm_type="bfloat16",
+                )
+            ]
+
+        with (
+            patch.object(mod, "get_sm_version", return_value=89),
+            patch.object(mod, "get_mla_module_precision_specs", side_effect=precision_specs),
+        ):
+            cases = mod._build_module_test_cases("dsa", "generation")
+
+        assert cases
+        assert calls == [("sglang", "generation", 89)]
+
+    def test_full_dsa_sweep_canonicalizes_consumer_equivalent_checkpoints(self):
+        mod = _import_module()
+        with patch.object(mod, "get_sm_version", return_value=100):
+            cases = mod._build_module_test_cases("dsa", "context")
+        model_paths = {case[6] for case in cases}
         assert "deepseek-ai/DeepSeek-V3.2" in model_paths
-        assert "zai-org/GLM-5" in model_paths
-        assert "nvidia/GLM-5-NVFP4" in model_paths
+        assert "zai-org/GLM-5" not in model_paths
+        assert "zai-org/GLM-5-FP8" in model_paths
+        assert "nvidia/GLM-5.2-NVFP4" in model_paths
+        assert "nvidia/GLM-5-NVFP4" not in model_paths
 
     def test_mla_includes_v3_family(self):
         mod = _import_module()
@@ -259,25 +314,105 @@ class TestBuildModuleTestCases:
         assert model_paths == {
             "deepseek-ai/DeepSeek-R1",
             "deepseek-ai/DeepSeek-V3",
-            "nvidia/DeepSeek-V3.1-NVFP4",
         }
 
-    def test_format_length_10(self):
-        """Each DSA module test case includes a target TP size."""
+    def test_mla_blackwell_keeps_native_nvfp4_checkpoint(self):
+        mod = _import_module()
+        with patch.object(mod, "get_sm_version", return_value=100):
+            cases = mod._build_module_test_cases("mla", "context")
+        assert "nvidia/DeepSeek-V3.1-NVFP4" in {c[6] for c in cases}
+
+    def test_hopper_dsa_uses_bf16_glm_checkpoint(self):
+        mod = _import_module()
+        with patch.object(mod, "get_sm_version", return_value=90):
+            cases = mod._build_module_test_cases("dsa", "context")
+        model_paths = {case[6] for case in cases}
+        assert "zai-org/GLM-5" in model_paths
+        assert not any("NVFP4" in model_path for model_path in model_paths)
+
+    def test_targeted_quantized_artifact_keeps_requested_checkpoint(self, monkeypatch):
+        mod = _import_module()
+        monkeypatch.setenv("COLLECTOR_MODEL_PATH", "nvidia/GLM-5-NVFP4")
+        with patch.object(mod, "get_sm_version", return_value=100):
+            cases = mod._build_module_test_cases("dsa", "context")
+        assert cases
+        assert {case[6] for case in cases} == {"nvidia/GLM-5-NVFP4"}
+
+    def test_format_length_11(self):
+        """Each DSA module case includes target TP and prefill backend."""
         mod = _import_module()
         with patch.object(mod, "get_sm_version", return_value=90):
             for case in mod._build_module_test_cases("dsa", "generation"):
-                assert len(case) == 10
+                assert len(case) == 11
                 assert case[7] == "dsa"
                 assert case[8] is None  # DSA backend resolved at runtime
                 assert case[9] in {1, 2, 4, 8}
+                assert case[10] == ("flashmla_kv" if case[3] == "fp8" else None)
+
+    def test_blackwell_context_uses_0514_default_backend(self):
+        mod = _import_module()
+        with patch.object(mod, "get_sm_version", return_value=100):
+            cases = mod._build_module_test_cases("dsa", "context")
+        assert {case[10] for case in cases if case[3] == "fp8"} == {"trtllm"}
+
+    def test_blackwell_generation_uses_0514_default_backend(self):
+        mod = _import_module()
+        with patch.object(mod, "get_sm_version", return_value=100):
+            cases = mod._build_module_test_cases("dsa", "generation")
+        assert {case[10] for case in cases if case[3] == "fp8"} == {"trtllm"}
+
+    def test_skip_indexer_cases_use_glm52_canonical_model(self):
+        mod = _import_module()
+        with patch.object(mod, "get_sm_version", return_value=100):
+            cases = mod.get_dsa_context_module_skip_indexer_test_cases()
+        assert cases
+        assert {case[6] for case in cases} == {"nvidia/GLM-5.2-NVFP4"}
+
+    def test_glm_sparse_selector_preserves_targeted_artifact(self, monkeypatch):
+        _import_module()
+        source_path = Path("collector/sglang/glm5_dsa_sparse_modules.py")
+        tree = ast.parse(source_path.read_text(), filename=str(source_path))
+        selector_node = next(
+            node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_selected_glm5_models"
+        )
+        namespace = {"get_sm_version": lambda: 90}
+        exec(compile(ast.Module(body=[selector_node], type_ignores=[]), str(source_path), "exec"), namespace)
+        selector = namespace["_selected_glm5_models"]
+
+        monkeypatch.delenv("COLLECTOR_MODEL_PATH", raising=False)
+        assert selector() == ["zai-org/GLM-5"]
+        for model_path in ("nvidia/GLM-5-NVFP4", "nvidia/GLM-5.2-NVFP4"):
+            monkeypatch.setenv("COLLECTOR_MODEL_PATH", model_path)
+            assert selector() == []
+
+        namespace["get_sm_version"] = lambda: 100
+        monkeypatch.delenv("COLLECTOR_MODEL_PATH", raising=False)
+        assert selector() == ["nvidia/GLM-5.2-NVFP4"]
+        monkeypatch.setenv("COLLECTOR_MODEL_PATH", "nvidia/GLM-5-NVFP4")
+        assert selector() == ["nvidia/GLM-5-NVFP4"]
+
+        namespace["get_sm_version"] = lambda: 90
+        monkeypatch.setenv("COLLECTOR_MODEL_PATH", "deepseek-ai/DeepSeek-V3.2")
+        assert selector() == []
 
     def test_deduplication(self):
         """One entry per top-level sweep tuple, not per inner (seq, batch) shape."""
         mod = _import_module()
         with patch.object(mod, "get_sm_version", return_value=90):
             cases = mod._build_module_test_cases("dsa", "context")
-        keys = {(c[6], c[2], c[3], c[4], c[5], c[1]) for c in cases}
+        keys = {
+            (
+                c[6],
+                c[2],
+                c[3],
+                c[4],
+                c[5],
+                c[1],
+                c[9],
+                c[10],
+            )
+            for c in cases
+        }
         assert len(cases) == len(keys)
         assert all(c[0] == 0 for c in cases)
 
@@ -288,13 +423,27 @@ class TestBuildModuleTestCases:
         batch_sizes = {c[1] for c in cases}
         assert batch_sizes == set(mod.get_mla_module_sweep_spec("sglang").context_batch_sizes)
 
-    def test_glm5_nvfp4_context_includes_fp8_kv_module_case(self):
+    def test_targeted_glm5_nvfp4_context_is_not_emitted_on_hopper(self, monkeypatch):
         mod = _import_module()
+        monkeypatch.setenv("COLLECTOR_MODEL_PATH", "nvidia/GLM-5-NVFP4")
         with patch.object(mod, "get_sm_version", return_value=90):
             cases = mod._build_module_test_cases("dsa", "context")
-        assert any(
-            c[6] == "nvidia/GLM-5-NVFP4" and c[3] == "fp8" and c[4] == "bfloat16" and c[5] == "bfloat16" for c in cases
-        )
+        assert cases == []
+
+    def test_targeted_nvfp4_wideep_mla_is_not_emitted_on_hopper(self, monkeypatch):
+        mod = _import_module()
+        monkeypatch.setenv("COLLECTOR_MODEL_PATH", "nvidia/DeepSeek-V3.1-NVFP4")
+        with patch.object(mod, "get_sm_version", return_value=90):
+            assert mod._build_wideep_mla_test_cases("context") == []
+
+    def test_hopper_loader_rejects_nvfp4_before_sglang_initialization(self):
+        mod = _import_module()
+        with (
+            patch.object(mod, "get_sm_version", return_value=90),
+            patch.object(mod, "_model_native_gemm_quant", return_value="nvfp4"),
+            pytest.raises(ValueError, match=r"no collector-supported native NVFP4.*SM90"),
+        ):
+            mod.load_model_runner("example/NVFP4", 8, "bfloat16", "dsa")
 
     def test_placeholder_seq_batch(self):
         """seq_len and batch_size are placeholders (0) — subprocess sweeps internally."""
@@ -405,16 +554,12 @@ class TestBuildWideepMlaTestCases:
         assert {c[7] for c in cases} == {"mla"}
 
     def test_only_mla_models(self):
-        """Wideep MLA only includes MLA-type models, not DSA."""
+        """Full WideEP MLA keeps one consumer-equivalent V3 representative."""
         mod = _import_module()
         with patch.object(mod, "get_sm_version", return_value=90):
             cases = mod._build_wideep_mla_test_cases("context")
         model_paths = {c[6] for c in cases}
-        assert model_paths == {
-            "deepseek-ai/DeepSeek-R1",
-            "deepseek-ai/DeepSeek-V3",
-            "nvidia/DeepSeek-V3.1-NVFP4",
-        }
+        assert model_paths == {"deepseek-ai/DeepSeek-V3"}
 
     def test_sweeps_backends(self):
         """Hopper should sweep flashinfer and fa3 backends."""
@@ -432,3 +577,90 @@ class TestBuildWideepMlaTestCases:
                 assert case[3] == "bfloat16"  # kv_cache_dtype
                 assert case[4] == "bfloat16"  # compute_dtype
                 assert case[5] == "bfloat16"  # gemm_type
+
+
+@pytest.mark.unit
+class TestFailClosedOrchestration:
+    def test_empty_case_list_raises_before_model_load(self, monkeypatch):
+        mod = _import_module()
+        monkeypatch.setattr(mod, "get_context_test_cases", lambda _attn_type: [])
+        monkeypatch.setattr(mod, "_filter_cases_from_env", lambda cases, **_kwargs: cases)
+        monkeypatch.setattr(
+            mod,
+            "load_model_runner",
+            lambda **_kwargs: pytest.fail("empty sweep must fail before loading a model"),
+        )
+
+        with pytest.raises(RuntimeError, match=r"MLA module context has no runnable cases"):
+            mod.run_mla_module(
+                "mla",
+                8,
+                "deepseek-ai/DeepSeek-V3",
+                "bfloat16",
+                "bfloat16",
+                "bfloat16",
+                True,
+                0,
+                attention_backend="fa3",
+            )
+
+    def test_zero_logged_rows_raises(self, monkeypatch):
+        mod = _import_module()
+        test_case = [128, 1, 8, "bfloat16", "bfloat16", "bfloat16"]
+        monkeypatch.setattr(mod, "get_context_test_cases", lambda _attn_type: [test_case])
+        monkeypatch.setattr(mod, "_filter_cases_from_env", lambda cases, **_kwargs: cases)
+        monkeypatch.setattr(mod, "cleanup_distributed", lambda: None)
+        monkeypatch.setattr(mod, "load_model_runner", lambda **_kwargs: object())
+        monkeypatch.setattr(mod, "run_attention_torch", lambda **_kwargs: 0)
+
+        with pytest.raises(RuntimeError, match=r"MLA module context persisted no rows"):
+            mod.run_mla_module(
+                "mla",
+                8,
+                "deepseek-ai/DeepSeek-V3",
+                "bfloat16",
+                "bfloat16",
+                "bfloat16",
+                True,
+                0,
+                attention_backend="fa3",
+            )
+
+    def test_configured_subprocess_timeout_raises(self, monkeypatch):
+        mod = _import_module()
+
+        class TimedOutProcess:
+            returncode = None
+            killed = False
+            waited = False
+
+            def communicate(self, timeout=None):
+                assert timeout == 7
+                raise mod.subprocess.TimeoutExpired(cmd="mla-collector", timeout=timeout)
+
+            def kill(self):
+                self.killed = True
+
+            def wait(self):
+                self.waited = True
+                self.returncode = -9
+
+        process = TimedOutProcess()
+        monkeypatch.setenv("AIC_MLA_MODULE_SUBPROCESS_TIMEOUT_SEC", "7")
+        monkeypatch.setattr(mod.subprocess, "Popen", lambda *_args, **_kwargs: process)
+
+        with pytest.raises(RuntimeError, match=r"MLA module context subprocess timed out after 7s"):
+            mod._run_mla_subprocess(
+                "mla",
+                8,
+                "deepseek-ai/DeepSeek-V3",
+                "bfloat16",
+                "bfloat16",
+                "bfloat16",
+                True,
+                0,
+                attention_backend="fa3",
+            )
+
+        assert process.killed
+        assert process.waited
